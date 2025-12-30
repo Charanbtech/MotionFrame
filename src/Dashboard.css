@@ -1,0 +1,201 @@
+.dashboard-stats-contain {
+  background: white;
+  height: auto;
+  padding: 22px 12px;
+  margin-bottom: 24px;
+}
+
+.dashboard-stats {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.dashboard-stats .stat-card {
+  width: 190px;
+  height: 94px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease-in-out;
+  cursor: pointer;
+  margin: 0;
+}
+
+.dashboard-stats .stat-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+}
+
+.dashboard-stats .stat-card .stat-icon {
+  width: 47px;
+  height: 47px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Icon background colors */
+.dashboard-stats .stat-card .stat-icon.assigned {
+  background-color: #dbeafe; /* Light blue */
+  color: #1d4ed8;
+}
+
+.dashboard-stats .stat-card .stat-icon.unassigned {
+  background-color: #fef3c7; /* Light yellow */
+  color: #d97706;
+}
+
+.dashboard-stats .stat-card .stat-icon.pending {
+  background-color: #fce7f3; /* Light pink */
+  color: #be185d;
+}
+
+.dashboard-stats .stat-card .stat-icon.overdue {
+  background-color: #fee2e2; /* Light red */
+  color: #dc2626;
+}
+
+.dashboard-stats .stat-card .stat-icon.completed {
+  background-color: #d1fae5; /* Light green */
+  color: #059669;
+}
+
+.dashboard-stats .stat-card .stat-icon.total {
+  background-color: #dbeafe; /* Light blue */
+  color: #1d4ed8;
+}
+
+.dashboard-stats .stat-card .stat-icon.in-progress {
+  background-color: #e0f2fe; /* Light cyan */
+  color: #0891b2;
+}
+
+.dashboard-stats .stat-card .stat-icon i {
+  font-size: 20px;
+}
+
+.dashboard-stats .stat-card .stat-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dashboard-stats .stat-card .stat-content .stat-label {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 400;
+  font-style: normal;
+  font-size: 12px;
+  line-height: 20px;
+  color: #6b7280;
+  margin: 0;
+}
+
+.dashboard-stats .stat-card .stat-content .stat-count {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 500;
+  font-style: normal;
+  font-size: 32px;
+  line-height: 24px;
+  letter-spacing: 0%;
+  color: #111827;
+  margin: 0;
+  vertical-align: baseline;
+}
+
+/* Dashboard Action Buttons */
+.dashboard-stats .dashboard-buttons {
+  display: flex;
+  gap: 12px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.dashboard-stats .dashboard-buttons .btn-add-document {
+  width: 172px;
+  height: 62px;
+  border-radius: 6px;
+  border: 1px solid #053096;
+  background-color: #ffffff;
+  color: #0D61AE;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 400;
+  font-style: normal;
+  font-size: 14px;
+  line-height: 100%;
+  letter-spacing: 0.3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease-in-out;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.dashboard-stats .dashboard-buttons .btn-add-document:hover {
+  background-color: #f8f9fa;
+  border-color: #053096;
+  color: #0D61AE;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(5, 48, 150, 0.15);
+}
+
+.dashboard-stats .dashboard-buttons .btn-add-document:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(5, 48, 150, 0.1);
+}
+
+.dashboard-stats .dashboard-buttons .btn-add-document i {
+  color: #0D61AE;
+  font-size: 14px;
+}
+
+.dashboard-stats .dashboard-buttons .btn-assign-document {
+  width: 183px;
+  height: 62px;
+  border-radius: 6px;
+  background-color: #0D61AE;
+  border: 1px solid #0D61AE;
+  color: #ffffff;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 400;
+  font-style: normal;
+  font-size: 14px;
+  line-height: 100%;
+  letter-spacing: 0.3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease-in-out;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.dashboard-stats .dashboard-buttons .btn-assign-document:hover {
+  background-color: #0a4d8a;
+  border-color: #0a4d8a;
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(13, 97, 174, 0.3);
+}
+
+.dashboard-stats .dashboard-buttons .btn-assign-document:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(13, 97, 174, 0.2);
+}
+
+.dashboard-stats .dashboard-buttons .btn-assign-document i {
+  color: #ffffff;
+  font-size: 14px;
+}

@@ -1,0 +1,330 @@
+.bulk-upload-container {
+  background: #f5f5f5;
+  min-height: calc(100vh - 56px);
+  padding: 0;
+}
+
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #666;
+}
+
+.breadcrumb-item {
+  color: #666;
+}
+
+.breadcrumb-item.active {
+  color: #333;
+  font-weight: 500;
+}
+
+.breadcrumb-separator {
+  color: #999;
+}
+
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: #333;
+  margin: 0;
+}
+
+.upload-section {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.upload-left {
+  flex: 1;
+}
+
+.upload-right {
+  flex: 0 0 400px;
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  max-height: 328px;
+  overflow-y: auto;
+}
+
+.upload-section-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 16px;
+}
+
+.drop-zone {
+  background: white;
+  border: 2px dashed #d1d5db;
+  border-radius: 8px;
+  padding: 60px 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drop-zone.dragging {
+  border-color: #0D61AE;
+  background-color: #f0f7ff;
+}
+
+.drop-zone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.file-icon {
+  font-size: 64px;
+  opacity: 0.6;
+}
+
+.drop-zone-text {
+  font-size: 18px;
+  color: #666;
+  margin: 0;
+  font-weight: 500;
+}
+
+.browse-link {
+  background: none;
+  border: none;
+  color: #0D61AE;
+  font-size: 16px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font-weight: 500;
+}
+
+.browse-link:hover {
+  color: #0a4d8a;
+}
+
+.uploading-file-item {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.file-info-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.file-icon-small {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.file-progress-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.custom-progress-bar {
+  flex: 1;
+  height: 8px;
+  background-color: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.custom-progress-bar .progress-bar {
+  background-color: #0D61AE;
+  transition: width 0.3s ease;
+}
+
+.progress-percentage {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  min-width: 40px;
+  text-align: right;
+}
+
+.delete-file-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px 8px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.delete-file-btn:hover {
+  opacity: 1;
+}
+
+.upload-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.cancel-btn {
+  min-width: 100px;
+  border: 1px solid #053096;
+  color: #053096;
+  background: white;
+}
+
+.cancel-btn:hover {
+  background: #f8f9fa;
+  border-color: #053096;
+  color: #053096;
+}
+
+.import-btn {
+  min-width: 100px;
+  background-color: #0D61AE;
+  border-color: #0D61AE;
+}
+
+.import-btn:hover {
+  background-color: #0a4d8a;
+  border-color: #0a4d8a;
+}
+
+.import-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.uploaded-files-section {
+  background: white;
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.table-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 16px;
+}
+
+.uploaded-files-table {
+  margin: 0;
+}
+
+.uploaded-files-table thead {
+  background: #f9fafb;
+}
+
+.uploaded-files-table thead th {
+  font-weight: 600;
+  color: #333;
+  border-bottom: 2px solid #e5e7eb;
+  padding: 12px;
+  font-size: 14px;
+}
+
+.uploaded-files-table tbody td {
+  padding: 12px;
+  color: #666;
+  font-size: 14px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.uploaded-files-table tbody tr:hover {
+  background-color: #f9fafb;
+}
+
+.file-icon-inline {
+  margin-right: 8px;
+  font-size: 16px;
+}
+
+/* Custom Scrollbar Styles for Table */
+.table-scrollable {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Webkit browsers (Chrome, Safari, Edge) - Hide scrollbar by default */
+.table-scrollable::-webkit-scrollbar {
+  width: 10px;
+}
+
+.table-scrollable::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 10px;
+  margin: 5px 0;
+}
+
+.table-scrollable::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  transition: background 0.3s ease;
+}
+
+/* Show scrollbar on hover */
+.table-scrollable:hover::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.table-scrollable:hover::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #afafaf 0%, #afafaf 100%);
+  border: 2px solid #f1f1f1;
+}
+
+.table-scrollable:hover::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #8a8a8a 0%, #8a8a8a 100%);
+}
+
+/* Firefox - Hide scrollbar by default, show on hover */
+.table-scrollable {
+  scrollbar-width: none; /* Hide by default */
+}
+
+.table-scrollable:hover {
+  scrollbar-width: thin; /* Show on hover */
+  scrollbar-color: #afafaf #f1f1f1;
+}
+
+@media (max-width: 768px) {
+  .upload-section {
+    flex-direction: column;
+  }
+
+  .upload-right {
+    flex: 1;
+    max-width: 100%;
+  }
+
+  .drop-zone {
+    min-height: 200px;
+    padding: 40px 20px;
+  }
+}
+
+
+
