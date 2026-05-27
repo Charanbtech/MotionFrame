@@ -1,3 +1,4 @@
+import { API_BASE_URL, WS_BASE_URL } from './config';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -74,7 +75,7 @@ const TrainingLive = () => {
   // Fetch initial info to populate top bar
   const fetchJobInfo = useCallback(async () => {
     try {
-      const res = await fetch(`/api/training/${jobId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/training/${jobId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -140,7 +141,7 @@ const TrainingLive = () => {
     const connectWs = () => {
       if (status !== 'running' && status !== 'pending') return;
 
-      const ws = new WebSocket(`ws://localhost:8000/ws/training/${jobId}`);
+      const ws = new WebSocket(`${WS_BASE_URL}/ws/training/${jobId}`);
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
@@ -220,7 +221,7 @@ const TrainingLive = () => {
     setStopping(true);
     setShowStopConfirm(false);
     try {
-      await fetch(`/api/training/${jobId}/stop`, {
+      await fetch(`${API_BASE_URL}/api/training/${jobId}/stop`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });

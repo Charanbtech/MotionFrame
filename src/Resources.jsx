@@ -1,3 +1,4 @@
+import { API_BASE_URL } from './config';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -137,7 +138,7 @@ console.log(authToken);
             height: currentAnnotation.height
           };
           const token = authToken || localStorage.getItem('token');
-          fetch('/api/annotations', {
+          fetch(`${API_BASE_URL}/api/annotations', {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -160,7 +161,7 @@ console.log(authToken);
             brushSize: currentAnnotation.brushSize || 10
           };
           const token = authToken || localStorage.getItem('token');
-          fetch('/api/annotations', {
+          fetch(`${API_BASE_URL}/api/annotations', {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -181,7 +182,7 @@ console.log(authToken);
       if (currentTool === 'polygon' && polygonPoints.length >= 3 && currentClass) {
         // Save polygon annotation with keepalive
         const token = authToken || localStorage.getItem('token');
-        fetch('/api/annotations', {
+        fetch(`${API_BASE_URL}/api/annotations', {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
@@ -958,7 +959,7 @@ console.log(authToken);
       }
 
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/annotations', {
+      const response = await fetch(`${API_BASE_URL}/api/annotations', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -1095,14 +1096,14 @@ console.log(authToken);
     if (!image) return;
     setIsSmartSelectLoading(true);
     try {
-      const response = await fetch(`/uploads/${normalizeFilePath(image.filepath)}`);
+      const response = await fetch(`${API_BASE_URL}/uploads/${normalizeFilePath(image.filepath)}`);
       const blob = await response.blob();
       const file = new File([blob], image.filename, { type: blob.type });
 
       const formData = new FormData();
       formData.append('file', file);
 
-      const resp = await fetch('/api/sam/embedding', {
+      const resp = await fetch(`${API_BASE_URL}/api/sam/embedding', {
         method: 'POST',
         headers: {
           'X-Requested-From': 'ai-annotation'
@@ -1161,7 +1162,7 @@ console.log(authToken);
       formData.append('points', JSON.stringify(ptsArray));
       formData.append('point_labels', JSON.stringify(labelsArray));
 
-      const resp = await fetch('/api/sam/predict_interactive', {
+      const resp = await fetch(`${API_BASE_URL}/api/sam/predict_interactive', {
         method: 'POST',
         headers: {
           'X-Requested-From': 'ai-annotation'
@@ -1568,7 +1569,7 @@ console.log(authToken);
         return;
       }
 
-      const response = await fetch('/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1598,7 +1599,7 @@ console.log(authToken);
         return null;
       }
 
-      const response = await fetch('/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1634,7 +1635,7 @@ console.log(authToken);
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/projects/${projectId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -1675,7 +1676,7 @@ console.log(authToken);
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects', {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -1708,7 +1709,7 @@ console.log(authToken);
     setShowLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/projects`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1749,7 +1750,7 @@ console.log(authToken);
     try {
       // Fetch fresh project data from server to ensure we have latest classes
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/projects/${project.id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${project.id}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1856,7 +1857,7 @@ console.log(authToken);
         return;
       }
 
-      const response = await fetch('/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -1924,7 +1925,7 @@ console.log(authToken);
   const loadProjects = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2028,7 +2029,7 @@ console.log(authToken);
     // Update project in database with new classes and colors
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/projects/${currentProject.id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${currentProject.id}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -2090,7 +2091,7 @@ console.log(authToken);
     // Update project in database with updated classes
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/projects/${currentProject.id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${currentProject.id}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -2132,7 +2133,7 @@ console.log(authToken);
 
     try {
       const token = authToken || localStorage.getItem('token');
-      const response = await fetch(`/api/images/${imageId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/images/${imageId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -2141,7 +2142,7 @@ console.log(authToken);
 
       if (response.ok) {
         // Reload images from server to ensure consistency
-        const refreshedImages = await fetch(`/api/projects/${currentProject.id}/images`, {
+        const refreshedImages = await fetch(`${API_BASE_URL}/api/projects/${currentProject.id}/images`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -2207,7 +2208,7 @@ console.log(authToken);
 
       try {
         const token = authToken || localStorage.getItem('token');
-        const response = await fetch('/api/upload', {
+        const response = await fetch(`${API_BASE_URL}/api/upload', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -2268,7 +2269,7 @@ console.log(authToken);
     if (!user) return;
     
     try {
-      const response = await fetch('/api/bulk-upload/files');
+      const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
       if (response.ok) {
         const allFiles = await response.json();
         console.log('📁 Total files from API:', allFiles.length);
@@ -2367,7 +2368,7 @@ console.log(authToken);
     // Check which files already exist in project and add only new ones
     const token = authToken || localStorage.getItem('token');
     try {
-      const imagesResponse = await fetch(`/api/projects/${currentProject.id}/images`, {
+      const imagesResponse = await fetch(`${API_BASE_URL}/api/projects/${currentProject.id}/images`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2401,7 +2402,7 @@ console.log(authToken);
           }
 
           // Fetch and upload file
-          const fileResponse = await fetch(`/api/bulk-upload/files/${file.id}/preview`, {
+          const fileResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files/${file.id}/preview`, {
             credentials: 'include'
           });
           
@@ -2415,7 +2416,7 @@ console.log(authToken);
           formData.append('file', blob, file.file_name);
           formData.append('project_id', currentProject.id);
 
-          const uploadResponse = await fetch('/api/upload', {
+          const uploadResponse = await fetch(`${API_BASE_URL}/api/upload', {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${token}`
@@ -2466,7 +2467,7 @@ console.log(authToken);
     try {
       // Check if file already exists in the project
       const token = authToken || localStorage.getItem('token');
-      const imagesResponse = await fetch(`/api/projects/${currentProject.id}/images`, {
+      const imagesResponse = await fetch(`${API_BASE_URL}/api/projects/${currentProject.id}/images`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2486,7 +2487,7 @@ console.log(authToken);
 
       if (!fileAlreadyInProject) {
         // File doesn't exist in project, upload it
-        const fileResponse = await fetch(`/api/bulk-upload/files/${file.id}/preview`, {
+        const fileResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files/${file.id}/preview`, {
           credentials: 'include'
         });
         if (!fileResponse.ok) {
@@ -2498,7 +2499,7 @@ console.log(authToken);
         formData.append('file', blob, file.file_name);
         formData.append('project_id', currentProject.id);
 
-        const uploadResponse = await fetch('/api/upload', {
+        const uploadResponse = await fetch(`${API_BASE_URL}/api/upload', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -2518,7 +2519,7 @@ console.log(authToken);
       await loadProjectImages();
       
       // Find and load the image that matches this file
-      const imagesResponse2 = await fetch(`/api/projects/${currentProject.id}/images`, {
+      const imagesResponse2 = await fetch(`${API_BASE_URL}/api/projects/${currentProject.id}/images`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2551,7 +2552,7 @@ console.log(authToken);
 
     try {
       const token = authToken || localStorage.getItem('token');
-      const response = await fetch(`/api/projects/${idToUse}/images`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${idToUse}/images`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2612,7 +2613,7 @@ console.log(authToken);
     if (imageToLoad && imageToLoad.id) {
       try {
         const token = authToken || localStorage.getItem('token');
-        const response = await fetch(`/api/images/${imageToLoad.id}/annotations`, {
+        const response = await fetch(`${API_BASE_URL}/api/images/${imageToLoad.id}/annotations`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -2702,7 +2703,7 @@ console.log(authToken);
     if (imageToLoad && imageToLoad.id) {
       try {
         const token = authToken || localStorage.getItem('token');
-        const response = await fetch(`/api/images/${imageToLoad.id}/annotations`, {
+        const response = await fetch(`${API_BASE_URL}/api/images/${imageToLoad.id}/annotations`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -2805,7 +2806,7 @@ console.log(authToken);
         height: annotation.height
       } : { points: annotation.points, brushSize: annotation.brushSize || 10 };
 
-      const response = await fetch('/api/annotations', {
+      const response = await fetch(`${API_BASE_URL}/api/annotations', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -2836,7 +2837,7 @@ console.log(authToken);
 
     try {
       const token = authToken || localStorage.getItem('token');
-      const response = await fetch(`/api/images/${currentImage.id}/annotations`, {
+      const response = await fetch(`${API_BASE_URL}/api/images/${currentImage.id}/annotations`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2872,7 +2873,7 @@ console.log(authToken);
     try {
       const token = authToken || localStorage.getItem('token');
       if (annotation.id) {
-        await fetch(`/api/annotations/${annotation.id}`, { 
+        await fetch(`${API_BASE_URL}/api/annotations/${annotation.id}`, { 
           method: 'DELETE',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -2900,7 +2901,7 @@ console.log(authToken);
       if (last.id) {
         try {
           const token = authToken || localStorage.getItem('token');
-          await fetch(`/api/annotations/${last.id}`, { 
+          await fetch(`${API_BASE_URL}/api/annotations/${last.id}`, { 
             method: 'DELETE',
             headers: {
               'Authorization': `Bearer ${token}`
@@ -2947,7 +2948,7 @@ console.log(authToken);
     const deletePromises = annotations
       .filter(ann => ann.id)
       .map(ann =>
-        fetch(`/api/annotations/${ann.id}`, { 
+        fetch(`${API_BASE_URL}/api/annotations/${ann.id}`, { 
           method: 'DELETE',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -3047,7 +3048,7 @@ console.log(authToken);
 
     try {
       console.log('Exporting project ID:', projectIdToExport, 'Project name:', currentProject.name);
-      const response = await fetch('/api/export', {
+      const response = await fetch(`${API_BASE_URL}/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4493,7 +4494,7 @@ console.log(authToken);
                 try {
                   // Load existing annotations first to check for duplicates
                   const token = authToken || localStorage.getItem('token');
-                  const existingResponse = await fetch(`/api/images/${currentImage.id}/annotations`, {
+                  const existingResponse = await fetch(`${API_BASE_URL}/api/images/${currentImage.id}/annotations`, {
                     headers: {
                       'Authorization': `Bearer ${token}`
                     }
@@ -4539,7 +4540,7 @@ console.log(authToken);
                   let failedCount = 0;
                   for (const ann of newAnnotations) {
                     console.log(`💾 Saving: ${ann.class} at (${ann.coordinates.x}, ${ann.coordinates.y}, ${ann.coordinates.width}x${ann.coordinates.height})`);
-                    const response = await fetch('/api/annotations', {
+                    const response = await fetch(`${API_BASE_URL}/api/annotations', {
                       method: 'POST',
                       headers: { 
                         'Content-Type': 'application/json',
@@ -4605,7 +4606,7 @@ console.log(authToken);
                 try {
                   // Load existing annotations first to check for duplicates
                   const token = authToken || localStorage.getItem('token');
-                  const existingResponse = await fetch(`/api/images/${currentImage.id}/annotations`, {
+                  const existingResponse = await fetch(`${API_BASE_URL}/api/images/${currentImage.id}/annotations`, {
                     headers: {
                       'Authorization': `Bearer ${token}`
                     }
@@ -4647,7 +4648,7 @@ console.log(authToken);
                   // Save only new annotations
                   let savedCount = 0;
                   for (const ann of newAnnotations) {
-                    const response = await fetch('/api/annotations', {
+                    const response = await fetch(`${API_BASE_URL}/api/annotations', {
                       method: 'POST',
                       headers: { 
                         'Content-Type': 'application/json',
@@ -4965,7 +4966,7 @@ console.log(authToken);
                       setVersionLabel('');
                       try {
                         const token = authToken || localStorage.getItem('token');
-                        const res = await fetch('/api/dataset/export-version', {
+                        const res = await fetch(`${API_BASE_URL}/api/dataset/export-version', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                           body: JSON.stringify({ project_id: currentProject.id })

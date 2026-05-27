@@ -1,3 +1,4 @@
+import { API_BASE_URL } from './config';
 import { Container, Button, Row, Col } from 'react-bootstrap';
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -59,7 +60,7 @@ function ActionWorkspace() {
       const fetchProjects = async () => {
         try {
           const token = localStorage.getItem('token');
-          const response = await fetch('/api/projects', {
+          const response = await fetch(`${API_BASE_URL}/api/projects', {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           if (response.ok) {
@@ -97,7 +98,7 @@ function ActionWorkspace() {
     setLoadingAllProjects(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {

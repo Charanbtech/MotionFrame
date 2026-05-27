@@ -1,3 +1,4 @@
+import { API_BASE_URL } from '../config';
 import React, { useRef, useState, useEffect, useCallback } from "react";
 
 const Annotation = ({ currentProject, images, currentImageIndex, onImageSelect, onSaveAnnotations }) => {
@@ -65,7 +66,7 @@ const Annotation = ({ currentProject, images, currentImageIndex, onImageSelect, 
     if (!imageData || !imageData.id) return;
     
     try {
-      const response = await fetch(`/api/images/${imageData.id}/annotations`);
+      const response = await fetch(`${API_BASE_URL}/api/images/${imageData.id}/annotations`);
       const data = await response.json();
       
       if (data && data.length > 0) {

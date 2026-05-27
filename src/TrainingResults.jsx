@@ -1,3 +1,4 @@
+import { API_BASE_URL } from './config';
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -29,7 +30,7 @@ const TrainingResults = () => {
     if (!jobId) return;
 
     // Fetch Job Summary
-    fetch(`/api/training/${jobId}`, {
+    fetch(`${API_BASE_URL}/api/training/${jobId}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     .then(r => r.json())
@@ -37,7 +38,7 @@ const TrainingResults = () => {
     .catch(console.error);
 
     // Fetch CSV Data
-    fetch(`/api/training/${jobId}/results/csv`, {
+    fetch(`${API_BASE_URL}/api/training/${jobId}/results/csv`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     .then(r => r.ok ? r.json() : [])
@@ -48,7 +49,7 @@ const TrainingResults = () => {
   const handleRegister = async () => {
     setRegistering(true);
     try {
-      const res = await fetch(`/api/models/register`, {
+      const res = await fetch(`${API_BASE_URL}/api/models/register`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -71,7 +72,7 @@ const TrainingResults = () => {
   const downloadWeights = () => {
     // Basic download trigger (in reality, would need auth headers via blob if protected)
     // For local dev, we can just fetch and create blob url
-    fetch(`/api/training/${jobId}/weights/best.pt`, {
+    fetch(`${API_BASE_URL}/api/training/${jobId}/weights/best.pt`, {
         headers: { Authorization: `Bearer ${token}` }
     })
     .then(res => res.blob())
@@ -199,7 +200,7 @@ const TrainingResults = () => {
               <div className="tr-image-label">{img.label}</div>
               <div className="tr-img-wrapper" onClick={() => setExpandedImg(img.id)}>
                 <img 
-                  src={`/api/training/${jobId}/results/image/${img.id}?token=${token}`} 
+                  src={`${API_BASE_URL}/api/training/${jobId}/results/image/${img.id}?token=${token}`} 
                   alt={img.label}
                   onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.innerHTML = '<div style="color:#666;font-size:12px;">Not generated</div>'; }}
                 />
@@ -213,7 +214,7 @@ const TrainingResults = () => {
       {expandedImg && (
         <div className="tr-modal-overlay" onClick={() => setExpandedImg(null)}>
           <img 
-            src={`/api/training/${jobId}/results/image/${expandedImg}?token=${token}`} 
+            src={`${API_BASE_URL}/api/training/${jobId}/results/image/${expandedImg}?token=${token}`} 
             alt="Expanded"
             className="tr-modal-img"
             onClick={e => e.stopPropagation()}

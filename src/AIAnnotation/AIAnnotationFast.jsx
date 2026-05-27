@@ -1,3 +1,4 @@
+import { API_BASE_URL } from '../config';
 import React, { useState, useRef, useContext } from 'react';
 import { AuthContext } from '../AuthContext';
 import './AIAnnotationFast.css';
@@ -41,7 +42,7 @@ export default function AIAnnotationFast() {
         formData.append('files', file);
       });
 
-      const response = await fetch('/api/sam/batch?export=false', {
+      const response = await fetch(`${API_BASE_URL}/api/sam/batch?export=false', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${authToken}`,
@@ -79,7 +80,7 @@ export default function AIAnnotationFast() {
         formData.append('files', file);
       });
 
-      const response = await fetch('/api/sam/batch?export=true', {
+      const response = await fetch(`${API_BASE_URL}/api/sam/batch?export=true', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${authToken}`,

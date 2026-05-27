@@ -1,3 +1,4 @@
+import { API_BASE_URL } from './config';
 import React, { useState, useRef, useEffect } from 'react';
 import { Container, Button, Table, ProgressBar } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
@@ -18,7 +19,7 @@ const BulkUpload = () => {
   useEffect(() => {
     const loadUploadedFiles = async () => {
       try {
-        const response = await fetch('/api/bulk-upload/files');
+        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
         if (response.ok) {
           const files = await response.json();
           const transformedFiles = files.map(file => ({
@@ -137,7 +138,7 @@ const BulkUpload = () => {
       const formData = new FormData();
       formData.append('file', file);
       
-      const response = await fetch('/api/bulk-upload', {
+      const response = await fetch(`${API_BASE_URL}/api/bulk-upload', {
         method: 'POST',
         body: formData
       });
@@ -182,7 +183,7 @@ const BulkUpload = () => {
         }
       } else {
         // Regular file - reload all files from backend
-        const filesResponse = await fetch('/api/bulk-upload/files');
+        const filesResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
         if (filesResponse.ok) {
           const files = await filesResponse.json();
           const transformedFiles = files.map(file => ({
@@ -268,7 +269,7 @@ const BulkUpload = () => {
   const handleDeleteFile = async (fileId) => {
     if (!window.confirm("Are you sure you want to delete this file?")) return;
     try {
-      const res = await fetch(`/api/bulk-upload/files/${fileId}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/api/bulk-upload/files/${fileId}`, { method: 'DELETE' });
       if (res.ok) {
         setUploadedFiles(prev => prev.filter(f => f.id !== fileId));
       } else {
@@ -282,7 +283,7 @@ const BulkUpload = () => {
   const handleClearAll = async () => {
     if (!window.confirm("Are you sure you want to delete ALL uploaded files?")) return;
     try {
-      const res = await fetch(`/api/bulk-upload/files/clear_all`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/api/bulk-upload/files/clear_all`, { method: 'DELETE' });
       if (res.ok) {
         setUploadedFiles([]);
       } else {

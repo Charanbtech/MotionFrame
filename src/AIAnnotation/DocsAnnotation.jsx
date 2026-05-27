@@ -1,3 +1,4 @@
+import { API_BASE_URL } from '../config';
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import '../../src/style.scss';
 import MotionFrameLogo from '../assets/MotionFrame.svg';
@@ -262,7 +263,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
         headers['Authorization'] = `Bearer ${token}`;
       }
       
-      const response = await fetch(`/api/images/${imageData.id}/annotations`, {
+      const response = await fetch(`${API_BASE_URL}/api/images/${imageData.id}/annotations`, {
         headers
       });
       
@@ -1424,7 +1425,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
         : { points: annotation.points };
   
     try {
-      await fetch(`/api/annotations/${annotation.id}`, {
+      await fetch(`${API_BASE_URL}/api/annotations/${annotation.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -1453,7 +1454,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
     // Delete from database if it has an ID
     if (annotationToDelete.id && selectedImage) {
       try {
-        const response = await fetch(`/api/annotations/${annotationToDelete.id}`, {
+        const response = await fetch(`${API_BASE_URL}/api/annotations/${annotationToDelete.id}`, {
           method: 'DELETE'
         });
         if (!response.ok) {
@@ -1587,7 +1588,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
       const file = new File([blob], filename, { type: blob.type || 'image/jpeg' });
       form.append('file', file, filename);
 
-      const resp = await fetch('/api/docs/predict', {
+      const resp = await fetch(`${API_BASE_URL}/api/docs/predict', {
         method: 'POST',
         headers: { 'X-Requested-From': 'docs-annotation' },
         body: form
@@ -2201,7 +2202,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
                           const annotationToDelete = annotations[idx];
                           if (annotationToDelete.id && selectedImage) {
                             try {
-                              const response = await fetch(`/api/annotations/${annotationToDelete.id}`, { method: 'DELETE' });
+                              const response = await fetch(`${API_BASE_URL}/api/annotations/${annotationToDelete.id}`, { method: 'DELETE' });
                               if (response.ok) {
                                 setAnnotations(prev => prev.filter((_, i) => i !== idx));
                                 if (selectedAnnotationIndex === idx) setSelectedAnnotationIndex(null);

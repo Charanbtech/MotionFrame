@@ -1,3 +1,4 @@
+import { API_BASE_URL } from './config';
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -21,7 +22,7 @@ const ModelsList = () => {
 
   const fetchModels = async () => {
     try {
-      const res = await fetch(`/api/models/${projectId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/models/${projectId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -36,7 +37,7 @@ const ModelsList = () => {
   const handleDeploy = async (modelId) => {
     if (!window.confirm("Deploy this model? It will become the active model for inference.")) return;
     try {
-      const res = await fetch(`/api/models/${modelId}/deploy`, {
+      const res = await fetch(`${API_BASE_URL}/api/models/${modelId}/deploy`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -54,7 +55,7 @@ const ModelsList = () => {
   const handleDelete = async (modelId) => {
     if (!window.confirm("Are you sure you want to delete this model?")) return;
     try {
-      const res = await fetch(`/api/models/${modelId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/models/${modelId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -67,7 +68,7 @@ const ModelsList = () => {
   };
 
   const handleDownload = (jobId) => {
-    fetch(`/api/training/${jobId}/weights/best.pt`, {
+    fetch(`${API_BASE_URL}/api/training/${jobId}/weights/best.pt`, {
         headers: { Authorization: `Bearer ${token}` }
     })
     .then(res => res.blob())

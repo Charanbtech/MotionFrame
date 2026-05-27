@@ -1,3 +1,4 @@
+import { API_BASE_URL } from './config';
 import React, { useState, useEffect, useRef } from 'react';
 import { Container, Button, Table, Form, InputGroup, Modal, Dropdown } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
@@ -46,7 +47,7 @@ const Dashboard = () => {
     // Load files from backend API
     const loadUploadedFiles = async () => {
       try {
-        const response = await fetch('/api/bulk-upload/files');
+        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
         if (response.ok) {
           const files = await response.json();
           // Transform uploaded files to document format
@@ -79,7 +80,7 @@ const Dashboard = () => {
     // Load users
     const loadUsers = async () => {
       try {
-        const response = await fetch('/api/users');
+        const response = await fetch(`${API_BASE_URL}/api/users');
         if (response.ok) {
           const usersData = await response.json();
           setUsers(usersData);
@@ -246,7 +247,7 @@ const Dashboard = () => {
         return;
       }
 
-      const projectResponse = await fetch('/api/projects', {
+      const projectResponse = await fetch(`${API_BASE_URL}/api/projects', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -287,7 +288,7 @@ const Dashboard = () => {
       const projectId = projectData.id;
 
       const assignPromises = Array.from(selectedFiles).map(async (fileId) => {
-        const response = await fetch(`/api/bulk-upload/files/${fileId}`, {
+        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files/${fileId}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -316,7 +317,7 @@ const Dashboard = () => {
       setProjectNameForAssign('');
 
       // Reload files
-      const response = await fetch('/api/bulk-upload/files');
+      const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
       if (response.ok) {
         const files = await response.json();
         const transformedFiles = files.map((file) => ({
@@ -338,7 +339,7 @@ const Dashboard = () => {
       }
 
       // Reload users to update file counts
-      const usersResponse = await fetch('/api/users');
+      const usersResponse = await fetch(`${API_BASE_URL}/api/users');
       if (usersResponse.ok) {
         const usersData = await usersResponse.json();
         setUsers(usersData);
@@ -364,7 +365,7 @@ const Dashboard = () => {
     setFileToExport(file);
     
     try {
-      const response = await fetch(`/api/bulk-upload/files/${file.id}/export`);
+      const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files/${file.id}/export`);
       
       if (!response.ok) {
         throw new Error(`Export failed: ${response.statusText}`);
@@ -412,7 +413,7 @@ const Dashboard = () => {
       }
       // Otherwise, keep assigned_to (it will show who completed it even when unassigned)
       
-      const response = await fetch(`/api/bulk-upload/files/${fileToRevert.id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files/${fileToRevert.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -425,7 +426,7 @@ const Dashboard = () => {
       }
 
       // Reload files
-      const reloadResponse = await fetch('/api/bulk-upload/files');
+      const reloadResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
       if (reloadResponse.ok) {
         const files = await reloadResponse.json();
         const transformedFiles = files.map((file) => ({
@@ -484,7 +485,7 @@ const Dashboard = () => {
           updateData.assigned_to = null;
         }
         
-        const response = await fetch(`/api/bulk-upload/files/${file.id}`, {
+        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files/${file.id}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -503,7 +504,7 @@ const Dashboard = () => {
       const successCount = results.filter(r => r.success).length;
 
       // Reload files
-      const reloadResponse = await fetch('/api/bulk-upload/files');
+      const reloadResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
       if (reloadResponse.ok) {
         const files = await reloadResponse.json();
         const transformedFiles = files.map((file) => ({
@@ -1705,7 +1706,7 @@ const Dashboard = () => {
                 console.log('Creating project with token:', token ? `${token.substring(0, 20)}...` : 'No token');
 
                 // Create project
-                const projectResponse = await fetch('/api/projects', {
+                const projectResponse = await fetch(`${API_BASE_URL}/api/projects', {
                   method: 'POST',
                   headers: { 
                     'Content-Type': 'application/json',
@@ -1767,7 +1768,7 @@ const Dashboard = () => {
                   for (let j = 0; j < filesForThisUser && fileIndex < unassignedFiles.length; j++) {
                     const file = unassignedFiles[fileIndex];
                     assignPromises.push(
-                      fetch(`/api/bulk-upload/files/${file.id}`, {
+                      fetch(`${API_BASE_URL}/api/bulk-upload/files/${file.id}`, {
                         method: 'PUT',
                         headers: {
                           'Content-Type': 'application/json',
@@ -1794,7 +1795,7 @@ const Dashboard = () => {
                 }
 
                 // Reload files to reflect changes
-                const reloadResponse = await fetch('/api/bulk-upload/files');
+                const reloadResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
                 if (reloadResponse.ok) {
                   const files = await reloadResponse.json();
                   const transformedFiles = files.map((file) => ({
@@ -1816,7 +1817,7 @@ const Dashboard = () => {
                 }
 
                 // Reload users to update their file counts (for Assign Document popup)
-                const usersResponse = await fetch('/api/users');
+                const usersResponse = await fetch(`${API_BASE_URL}/api/users');
                 if (usersResponse.ok) {
                   const usersData = await usersResponse.json();
                   setUsers(usersData);

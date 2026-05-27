@@ -1,3 +1,4 @@
+import { API_BASE_URL } from './config';
 import React, { useState, useEffect } from 'react';
 import { Container, Button, Table, Form, InputGroup, Modal, Dropdown } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
@@ -23,7 +24,7 @@ const AssignedDocument = () => {
     // Load all users
     const loadUsers = async () => {
       try {
-        const response = await fetch('/api/users');
+        const response = await fetch(`${API_BASE_URL}/api/users');
         if (response.ok) {
           const usersData = await response.json();
           setUsers(usersData);
@@ -36,7 +37,7 @@ const AssignedDocument = () => {
     // Load uploaded files to calculate stats
     const loadUploadedFiles = async () => {
       try {
-        const response = await fetch('/api/bulk-upload/files');
+        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
         if (response.ok) {
           const files = await response.json();
           setUploadedFiles(files);
@@ -171,7 +172,7 @@ const AssignedDocument = () => {
     setUserToExport(user);
     
     try {
-      const response = await fetch(`/api/users/${user.id}/export`);
+      const response = await fetch(`${API_BASE_URL}/api/users/${user.id}/export`);
       
       if (!response.ok) {
         if (response.status === 404) {
@@ -223,7 +224,7 @@ const AssignedDocument = () => {
         return;
       }
 
-      const response = await fetch(`/api/users/${userToUpdate.id}/owner`, {
+      const response = await fetch(`${API_BASE_URL}/api/users/${userToUpdate.id}/owner`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -236,7 +237,7 @@ const AssignedDocument = () => {
 
       if (response.ok) {
         // Reload users
-        const usersResponse = await fetch('/api/users');
+        const usersResponse = await fetch(`${API_BASE_URL}/api/users');
         if (usersResponse.ok) {
           const usersData = await usersResponse.json();
           setUsers(usersData);
