@@ -26,3 +26,8 @@ python-dotenv==1.0.0
 
 # YOLO / Ultralytics - NOT COMPATIBLE with Python 3.13
 # ultralytics==8.0.0  <-- REMOVE THIS
+
+# CLIP semantic scoring (Smart Detect v5)
+transformers>=4.40.0
+torch>=2.2.0
+torchvision>=0.17.0

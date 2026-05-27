@@ -7,6 +7,9 @@ const BulkUpload = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const completedUploadsRef = useRef(new Set()); // Track completed uploads to prevent duplicates
+  const uploadQueueRef = useRef([]);
+  const activeUploadsRef = useRef(0);
+  const MAX_CONCURRENT_UPLOADS = 5;
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState([]);
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -15,7 +18,7 @@ const BulkUpload = () => {
   useEffect(() => {
     const loadUploadedFiles = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/bulk-upload/files');
+        const response = await fetch('/api/bulk-upload/files');
         if (response.ok) {
           const files = await response.json();
           const transformedFiles = files.map(file => ({
@@ -72,10 +75,17 @@ const BulkUpload = () => {
 
     setUploadingFiles(prev => [...prev, ...newUploadingFiles]);
 
-    // Simulate file upload progress
-    newUploadingFiles.forEach((uploadingFile) => {
-      simulateUpload(uploadingFile.id);
-    });
+    // Add to queue ref and start processing
+    uploadQueueRef.current.push(...newUploadingFiles);
+    processUploadQueue();
+  };
+
+  const processUploadQueue = () => {
+    while (activeUploadsRef.current < MAX_CONCURRENT_UPLOADS && uploadQueueRef.current.length > 0) {
+      const nextFile = uploadQueueRef.current.shift();
+      activeUploadsRef.current++;
+      simulateUpload(nextFile.id);
+    }
   };
 
   const simulateUpload = (fileId) => {
@@ -127,7 +137,7 @@ const BulkUpload = () => {
       const formData = new FormData();
       formData.append('file', file);
       
-      const response = await fetch('http://localhost:8000/api/bulk-upload', {
+      const response = await fetch('/api/bulk-upload', {
         method: 'POST',
         body: formData
       });
@@ -172,7 +182,7 @@ const BulkUpload = () => {
         }
       } else {
         // Regular file - reload all files from backend
-        const filesResponse = await fetch('http://localhost:8000/api/bulk-upload/files');
+        const filesResponse = await fetch('/api/bulk-upload/files');
         if (filesResponse.ok) {
           const files = await filesResponse.json();
           const transformedFiles = files.map(file => ({
@@ -204,6 +214,9 @@ const BulkUpload = () => {
       // Remove from completed ref so it can be retried
       completedUploadsRef.current.delete(fileId);
       alert(`Failed to upload ${file.name}: ${error.message}`);
+    } finally {
+      activeUploadsRef.current--;
+      processUploadQueue();
     }
   };
 
@@ -252,6 +265,34 @@ const BulkUpload = () => {
     setUploadingFiles(prev => prev.filter(f => f.id !== fileId));
   };
 
+  const handleDeleteFile = async (fileId) => {
+    if (!window.confirm("Are you sure you want to delete this file?")) return;
+    try {
+      const res = await fetch(`/api/bulk-upload/files/${fileId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setUploadedFiles(prev => prev.filter(f => f.id !== fileId));
+      } else {
+        alert("Failed to delete file.");
+      }
+    } catch (err) {
+      alert("Error deleting file.");
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!window.confirm("Are you sure you want to delete ALL uploaded files?")) return;
+    try {
+      const res = await fetch(`/api/bulk-upload/files/clear_all`, { method: 'DELETE' });
+      if (res.ok) {
+        setUploadedFiles([]);
+      } else {
+        alert("Failed to clear files.");
+      }
+    } catch (err) {
+      alert("Error clearing files.");
+    }
+  };
+
   const handleImport = () => {
     // Handle import logic here
     console.log('Importing files...');
@@ -261,110 +302,92 @@ const BulkUpload = () => {
   const getFileIcon = (fileType) => {
     const type = fileType.toLowerCase();
     if (type === 'pdf') {
-      return '📄';
+      return <i className="fas fa-file-pdf" style={{ color: '#EF4444' }}></i>;
     } else if (['png', 'jpg', 'jpeg'].includes(type)) {
-      return '🖼️';
+      return <i className="fas fa-file-image" style={{ color: '#3B82F6' }}></i>;
     }
-    return '📁';
+    return <i className="fas fa-file-alt" style={{ color: '#6B7280' }}></i>;
   };
 
   return (
     <div className="bulk-upload-container">
-      <Container fluid className="py-4 px-4">
-        {/* Breadcrumbs */}
-        <div className="breadcrumbs mb-3">
-          <span 
-            className="breadcrumb-item" 
+      <div className="bulk-upload-inner">
+        <div style={{ marginBottom: '20px', display: 'flex' }}>
+          <Button 
+            variant="outline-primary" 
             onClick={() => navigate('/dashboard')}
             style={{ 
-              cursor: 'pointer', 
-              color: '#007bff',
-              textDecoration: 'none'
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '8px',
+              backgroundColor: '#fff',
+              border: '1px solid #dee2e6',
+              color: '#495057'
             }}
-            onMouseEnter={(e) => e.target.style.textDecoration = 'underline'}
-            onMouseLeave={(e) => e.target.style.textDecoration = 'none'}
           >
-            Dashboard
-          </span>
-          <span className="breadcrumb-separator">/</span>
-          <span className="breadcrumb-item active">Add bulk users</span>
+            <i className="fas fa-arrow-left"></i> Back to Dashboard
+          </Button>
         </div>
 
-        {/* Main Title */}
-        <h2 className="page-title mb-4">Bulk Upload Document</h2>
+        {/* ── Upload Grid ── */}
+        <div className={`bu-upload-grid ${uploadingFiles.length > 0 ? 'has-queue' : ''}`}>
 
-        <div className="upload-section">
-          {/* Drag and Drop Zone */}
-          <div className="upload-left">
-            <div
-              className={`drop-zone ${isDragging ? 'dragging' : ''}`}
-              onDragEnter={handleDragEnter}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-            >
-              <div className="drop-zone-content">
-                <div className="file-icon">📁</div>
-                <p className="drop-zone-text">Drag files here</p>
-                <button 
-                  className="browse-link"
-                  onClick={handleBrowseClick}
-                >
-                  or browse your computer
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept=".png,.jpg,.jpeg,.pdf"
-                  onChange={handleFileInputChange}
-                  style={{ display: 'none' }}
-                />
-              </div>
+          {/* Drop Zone */}
+          <div
+            className={`bu-drop-zone ${isDragging ? 'dragging' : ''}`}
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={handleBrowseClick}
+          >
+            <div className="bu-drop-icon">
+              <i className="fas fa-cloud-upload-alt"></i>
             </div>
+            <p className="bu-drop-title">
+              {isDragging ? 'Drop files here' : 'Drag & drop files'}
+            </p>
+            <p className="bu-drop-subtitle">or click to browse your computer</p>
+            <button className="bu-browse-btn" onClick={(e) => { e.stopPropagation(); handleBrowseClick(); }}>
+              Select Files
+            </button>
+            <p className="bu-formats-note">Supports PNG, JPG, JPEG, PDF</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".png,.jpg,.jpeg,.pdf"
+              onChange={handleFileInputChange}
+              style={{ display: 'none' }}
+            />
           </div>
 
-          {/* Files Uploading Section */}
+          {/* Upload Queue Panel — only visible when there are uploading files */}
           {uploadingFiles.length > 0 && (
-            <div className="upload-right table-scrollable">
-              <h4 className="upload-section-title">Files uploading</h4>
+            <div className="bu-queue-panel">
+              <p className="bu-queue-title">Uploading ({uploadingFiles.length})</p>
               {uploadingFiles.map((file) => (
-                <div key={file.id} className="uploading-file-item">
-                  <div className="file-info-row">
-                    <div className="file-icon-small">📄</div>
-                    <div className="file-progress-info">
-                      <div className="progress-container">
-                        <ProgressBar 
-                          now={file.progress} 
-                          className="custom-progress-bar"
-                        />
-                        <span className="progress-percentage">{Math.round(file.progress)}%</span>
-                      </div>
-                      <button
-                        className="delete-file-btn"
-                        onClick={() => handleCancelUpload(file.id)}
-                        title="Remove file"
-                      >
-                        🗑️
-                      </button>
+                <div key={file.id} className="bu-queue-item">
+                  <div className="bu-queue-item-header">
+                    <div className="bu-file-icon-wrap">
+                      <i className="fas fa-file"></i>
                     </div>
+                    <span className="bu-file-name">{file.name}</span>
+                    <button className="bu-remove-btn" onClick={() => handleCancelUpload(file.id)} title="Remove">
+                      <i className="fas fa-times"></i>
+                    </button>
                   </div>
-                  <div className="upload-actions">
-                    <Button
-                      variant="outline-secondary"
-                      className="cancel-btn"
-                      onClick={() => handleCancelUpload(file.id)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      variant="primary"
-                      className="import-btn"
-                      onClick={handleImport}
-                      disabled={file.progress < 100}
-                    >
-                      Import
-                    </Button>
+                  <div className="bu-progress-row">
+                    <div className="bu-progress-track">
+                      <div className="bu-progress-fill" style={{ width: `${file.progress}%` }}></div>
+                    </div>
+                    <span className="bu-progress-pct">{Math.round(file.progress)}%</span>
+                  </div>
+                  <div className="bu-queue-actions">
+                    <button className="bu-btn-cancel" onClick={() => handleCancelUpload(file.id)}>Cancel</button>
+                    <button className="bu-btn-import" onClick={handleImport} disabled={file.progress < 100}>
+                      {file.progress < 100 ? 'Uploading…' : 'Import'}
+                    </button>
                   </div>
                 </div>
               ))}
@@ -372,53 +395,70 @@ const BulkUpload = () => {
           )}
         </div>
 
-        {/* Uploaded Files Table */}
-        <div className="uploaded-files-section mt-4">
-          <h4 className="table-title">Uploaded Files</h4>
-          <div className="table-responsive table-scrollable" style={{ height: 'calc(100vh - 31rem)', overflowY: 'auto' }}>
-            <Table className="uploaded-files-table">
-              <thead>
-                <tr>
-                  <th>File Name</th>
-                  <th>File Type</th>
-                  <th>Uploaded On</th>
-                </tr>
-              </thead>
-              <tbody>
-                {uploadedFiles.length > 0 ? (
-                  uploadedFiles
+        {/* ── Uploaded Files Table ── */}
+        <div className="bu-files-section">
+          <div className="bu-files-header">
+            <h4 className="bu-files-title">Uploaded Files</h4>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <span className="bu-files-count">{uploadedFiles.length} files</span>
+              {uploadedFiles.length > 0 && (
+                <Button variant="danger" size="sm" onClick={handleClearAll}>
+                  <i className="fas fa-trash"></i> Clear All
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="bu-table-wrap">
+            {uploadedFiles.length > 0 ? (
+              <table className="bu-table">
+                <thead>
+                  <tr>
+                    <th>File Name</th>
+                    <th>Type</th>
+                    <th>Uploaded On</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {uploadedFiles
                     .sort((a, b) => {
-                      // Sort by upload time, newest first
-                      if (a.uploadedAt && b.uploadedAt) {
-                        return b.uploadedAt - a.uploadedAt;
-                      }
+                      if (a.uploadedAt && b.uploadedAt) return b.uploadedAt - a.uploadedAt;
                       return 0;
                     })
                     .map((file) => (
                       <tr key={file.id}>
                         <td>
-                          <span className="file-icon-inline">{getFileIcon(file.fileType)}</span>
-                          {file.fileName}
+                          <div className="bu-file-cell">
+                            {getFileIcon(file.fileType)}
+                            <span>{file.fileName}</span>
+                          </div>
                         </td>
-                        <td>{file.fileType}</td>
+                        <td>
+                          <span className="bu-file-type-badge">{file.fileType}</span>
+                        </td>
                         <td>{file.uploadedOn}</td>
+                        <td>
+                          <Button variant="outline-danger" size="sm" onClick={() => handleDeleteFile(file.id)}>
+                            <i className="fas fa-trash"></i>
+                          </Button>
+                        </td>
                       </tr>
-                    ))
-                ) : (
-                  <tr>
-                    <td colSpan="3" className="text-center text-muted">
-                      No files uploaded yet
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </Table>
+                    ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="bu-empty-state">
+                <i className="fas fa-inbox"></i>
+                <p>No files uploaded yet. Start by uploading some files above.</p>
+              </div>
+            )}
           </div>
         </div>
-      </Container>
+
+      </div>
     </div>
   );
 };
 
 export default BulkUpload;
-

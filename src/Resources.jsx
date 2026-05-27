@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import RoboSpectraLogo from './assets/Robot.svg';
+import MotionFrameLogo from './assets/MotionFrame.svg';
 import './Resources.css';
 import './style.scss';
 import AIAnnotation from './AIAnnotation/AIannotation';
@@ -9,6 +9,7 @@ import DocsAnnotation from './AIAnnotation/DocsAnnotation';
 
 const Resources = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, authToken } = useAuth();
   // Global state
   const [currentProject, setCurrentProject] = useState(null);
@@ -43,6 +44,7 @@ const Resources = () => {
   const [imageObj, setImageObj] = useState(null);
   const [selectedAnnotationIndex, setSelectedAnnotationIndex] = useState(-1);
   const [docsAnnotationReloadTrigger, setDocsAnnotationReloadTrigger] = useState(0);
+  const [redoStack, setRedoStack] = useState([]);
 
   // Modal states
   const [showProjectModal, setShowProjectModal] = useState(false);
@@ -51,6 +53,9 @@ const Resources = () => {
   const [showAssignedFilesModal, setShowAssignedFilesModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showLoading, setShowLoading] = useState(false);
+  // Dataset version state
+  const [versionStatus, setVersionStatus] = useState('idle'); // 'idle' | 'generating' | 'ready' | 'error'
+  const [versionLabel, setVersionLabel] = useState('');
   const [toastMessage, setToastMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [showPolygonTooltip, setShowPolygonTooltip] = useState(false);
@@ -84,6 +89,19 @@ const Resources = () => {
   const [projectDescription, setProjectDescription] = useState('');
   const [projectClasses, setProjectClasses] = useState('');
   const [exportFormat, setExportFormat] = useState('yolov8');
+
+  // Smart Select states
+  const [smartSelectPoints, setSmartSelectPoints] = useState([]); // Array of {x, y, type: 1|0}
+  const [smartSelectMask, setSmartSelectMask] = useState(null);
+  const [smartSelectMode, setSmartSelectMode] = useState('add'); // 'add' or 'remove'
+  const smartSelectModeRef = useRef('add'); // ref mirror for use inside event handlers
+  const [smartSelectSimplify, setSmartSelectSimplify] = useState(0.5);
+  const [isSmartSelectLoading, setIsSmartSelectLoading] = useState(false);
+  const smartSelectEmbeddingRef = useRef(null);
+  const smartSelectPointsRef = useRef([]);
+  const smartSelectMaskImgRef = useRef(null);
+  const smartSelectProcessingRef = useRef(false);
+  const mousePosRef = useRef({ x: 0, y: 0 });
 
   // Upload states
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -119,7 +137,7 @@ console.log(authToken);
             height: currentAnnotation.height
           };
           const token = authToken || localStorage.getItem('token');
-          fetch('http://localhost:8000/api/annotations', {
+          fetch('/api/annotations', {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -142,7 +160,7 @@ console.log(authToken);
             brushSize: currentAnnotation.brushSize || 10
           };
           const token = authToken || localStorage.getItem('token');
-          fetch('http://localhost:8000/api/annotations', {
+          fetch('/api/annotations', {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -163,7 +181,7 @@ console.log(authToken);
       if (currentTool === 'polygon' && polygonPoints.length >= 3 && currentClass) {
         // Save polygon annotation with keepalive
         const token = authToken || localStorage.getItem('token');
-        fetch('http://localhost:8000/api/annotations', {
+        fetch('/api/annotations', {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
@@ -183,11 +201,31 @@ console.log(authToken);
     }
   };
 
+  // On mount: restore active project from sessionStorage (clears on browser close/refresh)
+  useEffect(() => {
+    // Purge legacy localStorage key from previous version (migration cleanup)
+    localStorage.removeItem('lastProjectId');
+
+    // First check URL param (direct navigation from Home page project card)
+    const projectIdParam = searchParams.get('projectId');
+    // Then fall back to sessionStorage (persists across in-app navigation only)
+    const sessionProjectId = sessionStorage.getItem('activeProjectId');
+    const pidStr = projectIdParam || sessionProjectId;
+    if (pidStr) {
+      const pid = parseInt(pidStr);
+      if (!isNaN(pid)) {
+        // Slight delay to ensure canvas is initialized
+        setTimeout(() => loadProjectById(pid), 300);
+      }
+    }
+    // Note: we intentionally do NOT read localStorage here so that
+    // closing/refreshing the browser always shows the welcome screen.
+  }, []);
+
   useEffect(() => {
     initializeCanvas();
 
-    // Clear localStorage on mount to prevent auto-loading projects
-    localStorage.removeItem('lastProjectId');
+    // Don't auto-clear lastProjectId — it's keyed per-project now
 
     // Autosave on page visibility change (refresh, tab switch, etc.)
     const handleVisibilityChange = () => {
@@ -227,10 +265,23 @@ console.log(authToken);
       }
 
       switch (e.key) {
-        case 'v': case 'V': selectTool('select'); break;
+        case 's': case 'S': selectTool('select'); break;
         case 'b': case 'B': selectTool('bbox'); break;
         case 'p': case 'P': selectTool('polygon'); break;
         case 'r': case 'R': selectTool('brush'); break;
+        case 'z': case 'Z':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            if (e.shiftKey) {
+              setRedoStack(current => {
+                if (current.length > 0) setTimeout(redoAnnotation, 0);
+                return current;
+              });
+            } else {
+              setTimeout(undoAnnotation, 0);
+            }
+          }
+          break;
         case 'Delete': case 'Backspace':
           e.preventDefault();
           if (selectedAnnotationIndex >= 0) {
@@ -283,7 +334,7 @@ console.log(authToken);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [currentProject, currentImage, currentAnnotation, polygonPoints, currentTool, currentClass]);
+  }, [currentProject, currentImage, currentAnnotation, polygonPoints, currentTool, currentClass, annotations, redoStack, selectedAnnotationIndex]);
 
   // Redraw canvas when class changes to ensure annotations are visible
   useEffect(() => {
@@ -295,6 +346,34 @@ console.log(authToken);
       return () => clearTimeout(timer);
     }
   }, [currentClass]);
+
+  // Real-time updates: Poll for assigned files and project list every 5 seconds
+  useEffect(() => {
+    if (user) {
+      loadAssignedFiles();
+      loadProjectList();
+      
+      const interval = setInterval(() => {
+        loadAssignedFiles();
+        loadProjectList();
+      }, 5000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [user]);
+
+  // Automatic background save for active annotations every 10 seconds
+  useEffect(() => {
+    if (currentProject && currentImage) {
+      const autosaveInterval = setInterval(() => {
+        if (currentAnnotation || (currentTool === 'polygon' && polygonPoints.length >= 3)) {
+          autosaveUnsavedAnnotations();
+        }
+      }, 10000);
+      
+      return () => clearInterval(autosaveInterval);
+    }
+  }, [currentProject, currentImage, currentAnnotation, polygonPoints, currentTool, currentClass]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -365,6 +444,36 @@ console.log(authToken);
     const rect = canvas.getBoundingClientRect();
     const x = (e.clientX - rect.left - panX) / zoom;
     const y = (e.clientY - rect.top - panY) / zoom;
+
+    // Handle Smart Select interaction
+    if (currentTool === 'smart-select') {
+      if (!smartSelectEmbeddingRef.current) {
+        showToastMessage('⏳ Please wait for AI to initialize...');
+        return;
+      }
+
+      console.log("CLICK_TRIGGERED");
+      console.log(`Computed coordinates: x=${x}, y=${y}`);
+
+      // Determine point type:
+      //   - Right-click (button=2) always forces NEGATIVE (remove)
+      //   - Left-click (button=0) uses the active mode toggle (add=1, remove=0)
+      let type;
+      if (e.button === 2) {
+        type = 0; // right-click → always negative
+      } else {
+        type = smartSelectModeRef.current === 'remove' ? 0 : 1;
+      }
+
+      const newPoint = { x, y, type };
+
+      const updatedPoints = [...smartSelectPointsRef.current, newPoint];
+      smartSelectPointsRef.current = updatedPoints;
+      setSmartSelectPoints(updatedPoints);
+
+      runSmartSelectInteractive(updatedPoints);
+      return;
+    }
 
     // Only allow panning with left-click + drag for select tool or when space is pressed
     // Box, Polygon, and Brush tools should not allow panning
@@ -449,8 +558,8 @@ console.log(authToken);
     const canvasX = e.clientX - rect.left;
     const canvasY = e.clientY - rect.top;
 
-    // Update mouse position for crosshair (in canvas coordinates)
-    setMousePos({ x: canvasX, y: canvasY });
+    // Update mouse position for crosshair (in ref to avoid re-renders)
+    mousePosRef.current = { x: canvasX, y: canvasY };
     setShowCrosshair(true);
 
     // Handle panning when active (only for select tool or space key)
@@ -787,23 +896,94 @@ console.log(authToken);
   };
 
   // Accept an optional annotation argument to avoid relying on state updates
-  const finalizeAnnotation = async (annotationArg = null) => {
+  const finalizeAnnotation = async (annotationArg = null, isRedo = false) => {
     const annotationToUse = annotationArg || currentAnnotation;
     if (!annotationToUse) return;
 
-    // Store as pending and show class selection modal for the NEXT annotation
-    // Clear current class so user must select for next annotation
+    if (!isRedo) {
+      setRedoStack([]);
+    }
+
+    // AUTOMATIC SAVE: if currentClass is already set, save immediately and don't clear it
+    if (currentClass) {
+      const tempId = Date.now();
+      const newAnnotation = {
+        ...annotationToUse,
+        class: currentClass,
+        id: tempId
+      };
+      
+      setAnnotations(prev => [...prev, newAnnotation]);
+      saveToDatabase(newAnnotation);
+      
+      // Clear transient drawing states
+      setCurrentAnnotation(null);
+      setBrushPoints([]);
+      setPolygonPoints([]);
+      setPolygonMousePos({ x: 0, y: 0 });
+      
+      // Keep currentTool and currentClass active for fast sequential annotations
+      redrawCanvas();
+      return;
+    }
+
+    // If no class is set, fallback to the confirmation modal
     setPendingAnnotation(annotationToUse);
     setPendingClassSelection(classes.length > 0 ? classes[0] : '');
-    setCurrentClass(null); // Clear current class so next annotation requires selection
+    
     // Clear transient states but keep annotation pending
     setCurrentAnnotation(null);
     setBrushPoints([]);
     setPolygonPoints([]);
     setPolygonMousePos({ x: 0, y: 0 });
     
-    // Don't add to annotations yet - wait for class selection
     redrawCanvas(); // Redraw to show pending annotation
+  };
+
+  // Helper to save to database immediately
+  const saveToDatabase = async (newAnnotation) => {
+    try {
+      let coords;
+      if (newAnnotation.type === 'bbox') {
+        coords = {
+          x: newAnnotation.x,
+          y: newAnnotation.y,
+          width: newAnnotation.width,
+          height: newAnnotation.height
+        };
+      } else if (newAnnotation.type === 'polygon') {
+        coords = { points: newAnnotation.points };
+      } else {
+        coords = { points: newAnnotation.points, brushSize: newAnnotation.brushSize || 10 };
+      }
+
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/annotations', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          image_id: currentImage.id,
+          class_name: newAnnotation.class,
+          annotation_type: newAnnotation.type,
+          coordinates: coords
+        })
+      });
+
+      if (!response.ok) {
+        console.error('Failed to save to database');
+      } else {
+        const savedData = await response.json();
+        // Update the temp ID with the real database ID
+        setAnnotations(prev => prev.map(ann => 
+          ann.id === newAnnotation.id ? { ...ann, id: savedData.id } : ann
+        ));
+      }
+    } catch (error) {
+      console.error('Error saving to database:', error);
+    }
   };
 
   // Save annotation after class selection
@@ -834,54 +1014,15 @@ console.log(authToken);
     setAnnotations(prev => [...prev, newAnnotation]);
     setPendingAnnotation(null);
     setPendingClassSelection('');
-    setCurrentClass(null); // Clear current class so next annotation requires selection
+    
+    // If user chose a class in the modal, set it as currentClass so next one is automatic
+    setCurrentClass(pendingClassSelection);
 
     // Save to database and update with real ID
-    try {
-      let coords;
-      if (newAnnotation.type === 'bbox') {
-        coords = {
-          x: newAnnotation.x,
-          y: newAnnotation.y,
-          width: newAnnotation.width,
-          height: newAnnotation.height
-        };
-      } else if (newAnnotation.type === 'polygon') {
-        coords = { points: newAnnotation.points };
-      } else {
-        coords = { points: newAnnotation.points, brushSize: newAnnotation.brushSize || 10 };
-      }
-
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/annotations', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          image_id: currentImage.id,
-          class_name: newAnnotation.class,
-          annotation_type: newAnnotation.type,
-          coordinates: coords
-        })
-      });
-
-      if (response.ok) {
-        const savedAnnotation = await response.json();
-        // Update the annotation ID in the local state with the database ID
-        setAnnotations(prev => prev.map(ann =>
-          ann.id === tempId ? { ...ann, id: savedAnnotation.id } : ann
-        ));
-      }
-    } catch (error) {
-      console.error('Error saving annotation:', error);
-    }
-
+    saveToDatabase(newAnnotation);
+    
     updateStats();
-    setTimeout(() => {
-      redrawCanvas();
-    }, 0);
+    redrawCanvas();
     showToastMessage('✅ Annotation saved');
   };
 
@@ -890,6 +1031,21 @@ console.log(authToken);
     setPendingClassSelection('');
     redrawCanvas();
   };
+
+  // Pre-load mask image to prevent flicker
+  useEffect(() => {
+    if (smartSelectMask) {
+      const img = new Image();
+      img.onload = () => {
+        smartSelectMaskImgRef.current = img;
+        redrawCanvas();
+      };
+      img.src = smartSelectMask;
+    } else {
+      smartSelectMaskImgRef.current = null;
+      redrawCanvas();
+    }
+  }, [smartSelectMask]);
 
   // Handle class panel dragging
   const handleClassPanelMouseDown = (e) => {
@@ -935,6 +1091,113 @@ console.log(authToken);
     }
   }, [isDraggingClassPanel, classPanelDragOffset, classPanelPosition]);
 
+  const computeSmartSelectEmbedding = async (image) => {
+    if (!image) return;
+    setIsSmartSelectLoading(true);
+    try {
+      const response = await fetch(`/uploads/${normalizeFilePath(image.filepath)}`);
+      const blob = await response.blob();
+      const file = new File([blob], image.filename, { type: blob.type });
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const resp = await fetch('/api/sam/embedding', {
+        method: 'POST',
+        headers: {
+          'X-Requested-From': 'ai-annotation'
+        },
+        body: formData
+      });
+
+      if (!resp.ok) throw new Error('Failed to compute embedding');
+      const data = await resp.json();
+      if (data.success) {
+        smartSelectEmbeddingRef.current = data.image_hash;
+        showToastMessage('✨ AI Ready! Click to select regions.');
+      }
+    } catch (err) {
+      console.error('Smart Select Error:', err);
+      showToastMessage('❌ Failed to initialize AI');
+    } finally {
+      setIsSmartSelectLoading(false);
+    }
+  };
+
+  const runSmartSelectInteractive = async (points) => {
+    if (!smartSelectEmbeddingRef.current) {
+      console.warn("DEBUG [SAM]: NO embedding ref found!");
+      return;
+    }
+
+    /* REMOVED DEBOUNCE BLOCKING to fire request on EVERY click
+    if (smartSelectProcessingRef.current) {
+      console.log("DEBUG [SAM]: Busy processing, will retry with latest points...");
+      const retryWithLatest = () => {
+        if (!smartSelectProcessingRef.current) {
+          runSmartSelectInteractive(smartSelectPointsRef.current);
+        } else {
+          setTimeout(retryWithLatest, 150);
+        }
+      };
+      setTimeout(retryWithLatest, 150);
+      return;
+    }
+    */
+    
+    smartSelectProcessingRef.current = true;
+    console.log(`DEBUG [SAM]: Running prediction with ${points.length} points.`);
+    
+    try {
+      const formData = new FormData();
+      formData.append('image_hash', smartSelectEmbeddingRef.current);
+      
+      const ptsArray = points.map(p => [p.x, p.y]);
+      const labelsArray = points.map(p => p.type);
+      
+      console.log(`Points length: ${ptsArray.length}, Labels length: ${labelsArray.length}`);
+      console.log(`Labels array:`, labelsArray);
+
+      formData.append('points', JSON.stringify(ptsArray));
+      formData.append('point_labels', JSON.stringify(labelsArray));
+
+      const resp = await fetch('/api/sam/predict_interactive', {
+        method: 'POST',
+        headers: {
+          'X-Requested-From': 'ai-annotation'
+        },
+        body: formData
+      });
+
+      if (!resp.ok) {
+        throw new Error(`Server returned error: ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      if (data.success) {
+        if (!data.masks || data.masks.length === 0) {
+          console.log("EMPTY_MASK");
+        } else {
+          console.log("MASK_RECEIVED");
+          setSmartSelectMask(data.masks[0]);
+          // We cache the polygons for finalize
+          const polyData = data.polygons[0];
+          setPendingAnnotation(prev => ({ 
+            ...prev, 
+            type: 'polygon', 
+            points: polyData,
+            class: currentClass || 'object'
+          }));
+        }
+      }
+    } catch (err) {
+      console.error('DEBUG [SAM]: Prediction Error:', err);
+    } finally {
+      smartSelectProcessingRef.current = false;
+      redrawCanvas();
+    }
+  };
+
   const redrawCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -970,13 +1233,41 @@ console.log(authToken);
       if (pendingAnnotation) {
         drawPendingAnnotation();
       }
+
+      // Draw Smart Select Mask and Points
+      if (currentTool === 'smart-select') {
+        const mImg = smartSelectMaskImgRef.current;
+        if (mImg) {
+          ctx.save();
+          ctx.translate(panX, panY);
+          ctx.scale(zoom, zoom);
+          ctx.globalAlpha = 0.4;
+          ctx.drawImage(mImg, 0, 0, imageObj.width, imageObj.height);
+          ctx.restore();
+        }
+
+        ctx.save();
+        ctx.translate(panX, panY);
+        ctx.scale(zoom, zoom);
+        smartSelectPointsRef.current.forEach(p => {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 5 / zoom, 0, 2 * Math.PI);
+          ctx.fillStyle = p.type === 1 ? '#00FF00' : '#FF0000';
+          ctx.fill();
+          ctx.lineWidth = 2 / zoom;
+          ctx.strokeStyle = '#fff';
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
+
       // Draw polygon preview if polygon tool is active and has points
       if (currentTool === 'polygon' && polygonPoints.length > 0) {
         // Use current mouse position for preview
         drawPolygonPreview(polygonMousePos.x, polygonMousePos.y);
       }
 
-      // Draw crosshair lines (x and y lines following cursor)
+      // Draw crosshair lines (x and y lines following cursor) using ref
       if (showCrosshair && imageObj) {
         ctx.save();
         ctx.strokeStyle = 'rgb(0, 0, 0)'; // Dark color with transparency
@@ -985,14 +1276,14 @@ console.log(authToken);
 
         // Vertical line (x-axis)
         ctx.beginPath();
-        ctx.moveTo(mousePos.x, 0);
-        ctx.lineTo(mousePos.x, canvas.height);
+        ctx.moveTo(mousePosRef.current.x, 0);
+        ctx.lineTo(mousePosRef.current.x, canvas.height);
         ctx.stroke();
 
         // Horizontal line (y-axis)
         ctx.beginPath();
-        ctx.moveTo(0, mousePos.y);
-        ctx.lineTo(canvas.width, mousePos.y);
+        ctx.moveTo(0, mousePosRef.current.y);
+        ctx.lineTo(canvas.width, mousePosRef.current.y);
         ctx.stroke();
 
         ctx.setLineDash([]); // Reset line dash
@@ -1181,6 +1472,22 @@ console.log(authToken);
     setPolygonMousePos({ x: 0, y: 0 });
     setBrushPoints([]);
 
+    // Logic for exiting/entering Smart Select
+    if (tool === 'smart-select') {
+      smartSelectPointsRef.current = [];
+      setSmartSelectPoints([]);
+      setSmartSelectMask(null);
+      if (currentImage) {
+        computeSmartSelectEmbedding(currentImage);
+      }
+    } else if (currentTool === 'smart-select') {
+      // Exiting smart select
+      smartSelectPointsRef.current = [];
+      setSmartSelectPoints([]);
+      setSmartSelectMask(null);
+      setPendingAnnotation(null);
+    }
+
     // After switching to manual tools, ensure annotations are visible and canvas is ready
     if (!isAITool && currentImage) {
       // Ensure annotations are loaded and visible
@@ -1261,7 +1568,7 @@ console.log(authToken);
         return;
       }
 
-      const response = await fetch('http://localhost:8000/api/projects', {
+      const response = await fetch('/api/projects', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1291,7 +1598,7 @@ console.log(authToken);
         return null;
       }
 
-      const response = await fetch('http://localhost:8000/api/projects', {
+      const response = await fetch('/api/projects', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1327,7 +1634,7 @@ console.log(authToken);
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/projects/${projectId}`, {
+      const response = await fetch(`/api/projects/${projectId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -1341,7 +1648,7 @@ console.log(authToken);
           setImages([]);
           setAnnotations([]);
           setCurrentImage(null);
-          localStorage.removeItem('lastProjectId');
+          sessionStorage.removeItem('activeProjectId');
         }
 
         // Reload project list
@@ -1368,7 +1675,7 @@ console.log(authToken);
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/projects', {
+      const response = await fetch('/api/projects', {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -1381,7 +1688,7 @@ console.log(authToken);
         setImages([]);
         setAnnotations([]);
         setCurrentImage(null);
-        localStorage.removeItem('lastProjectId');
+        sessionStorage.removeItem('activeProjectId');
 
         // Reload project list
         await loadProjectList();
@@ -1398,9 +1705,10 @@ console.log(authToken);
   };
 
   const loadProjectById = async (projectId) => {
+    setShowLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/projects`, {
+      const response = await fetch(`/api/projects`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1441,7 +1749,7 @@ console.log(authToken);
     try {
       // Fetch fresh project data from server to ensure we have latest classes
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/projects/${project.id}`, {
+      const response = await fetch(`/api/projects/${project.id}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1457,7 +1765,8 @@ console.log(authToken);
 
       // Set new project with fresh data
       setCurrentProject(freshProject);
-      // Don't save to localStorage - we want to show welcome screen on refresh
+      // Save active project ID in sessionStorage (resets on browser close/refresh)
+      sessionStorage.setItem('activeProjectId', freshProject.id);
 
       // Load new project's classes from fresh data
       const projectClasses = JSON.parse(freshProject.classes);
@@ -1490,11 +1799,28 @@ console.log(authToken);
       }
 
       // Load new project's images - pass project ID directly to avoid state timing issues
-      await loadProjectImages(freshProject.id);
-      showToastMessage('✅ Project loaded: ' + freshProject.name);
+      const loadedImages = await loadProjectImages(freshProject.id);
+
+      // 🔥 RESUME: restore last image index for this project
+      const savedIndex = localStorage.getItem(`lastImageIndex_${freshProject.id}`);
+      if (savedIndex !== null && loadedImages && loadedImages.length > 0) {
+        const idx = parseInt(savedIndex);
+        if (!isNaN(idx) && idx >= 0 && idx < loadedImages.length) {
+          // Small delay to ensure images state is set
+          setTimeout(() => loadImage(idx), 150);
+          showToastMessage(`✅ Resumed project: ${freshProject.name} • Image ${idx + 1}`);
+        } else {
+          showToastMessage('✅ Project loaded: ' + freshProject.name);
+        }
+      } else {
+        showToastMessage('✅ Project loaded: ' + freshProject.name);
+      }
     } catch (error) {
       console.error('Error loading project:', error);
       showToastMessage('❌ Error loading project');
+    } finally {
+      // Small artificial delay for smoothness
+      setTimeout(() => setShowLoading(false), 500);
     }
   };
 
@@ -1530,7 +1856,7 @@ console.log(authToken);
         return;
       }
 
-      const response = await fetch('http://localhost:8000/api/projects', {
+      const response = await fetch('/api/projects', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -1598,7 +1924,7 @@ console.log(authToken);
   const loadProjects = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/projects', {
+      const response = await fetch('/api/projects', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1702,7 +2028,7 @@ console.log(authToken);
     // Update project in database with new classes and colors
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/projects/${currentProject.id}`, {
+      const response = await fetch(`/api/projects/${currentProject.id}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -1764,7 +2090,7 @@ console.log(authToken);
     // Update project in database with updated classes
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/projects/${currentProject.id}`, {
+      const response = await fetch(`/api/projects/${currentProject.id}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -1806,7 +2132,7 @@ console.log(authToken);
 
     try {
       const token = authToken || localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/images/${imageId}`, {
+      const response = await fetch(`/api/images/${imageId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -1815,7 +2141,7 @@ console.log(authToken);
 
       if (response.ok) {
         // Reload images from server to ensure consistency
-        const refreshedImages = await fetch(`http://localhost:8000/api/projects/${currentProject.id}/images`, {
+        const refreshedImages = await fetch(`/api/projects/${currentProject.id}/images`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -1881,7 +2207,7 @@ console.log(authToken);
 
       try {
         const token = authToken || localStorage.getItem('token');
-        const response = await fetch('http://localhost:8000/api/upload', {
+        const response = await fetch('/api/upload', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -1942,7 +2268,7 @@ console.log(authToken);
     if (!user) return;
     
     try {
-      const response = await fetch('http://localhost:8000/api/bulk-upload/files');
+      const response = await fetch('/api/bulk-upload/files');
       if (response.ok) {
         const allFiles = await response.json();
         console.log('📁 Total files from API:', allFiles.length);
@@ -2041,7 +2367,7 @@ console.log(authToken);
     // Check which files already exist in project and add only new ones
     const token = authToken || localStorage.getItem('token');
     try {
-      const imagesResponse = await fetch(`http://localhost:8000/api/projects/${currentProject.id}/images`, {
+      const imagesResponse = await fetch(`/api/projects/${currentProject.id}/images`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2075,7 +2401,7 @@ console.log(authToken);
           }
 
           // Fetch and upload file
-          const fileResponse = await fetch(`http://localhost:8000/api/bulk-upload/files/${file.id}/preview`, {
+          const fileResponse = await fetch(`/api/bulk-upload/files/${file.id}/preview`, {
             credentials: 'include'
           });
           
@@ -2089,7 +2415,7 @@ console.log(authToken);
           formData.append('file', blob, file.file_name);
           formData.append('project_id', currentProject.id);
 
-          const uploadResponse = await fetch('http://localhost:8000/api/upload', {
+          const uploadResponse = await fetch('/api/upload', {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${token}`
@@ -2140,7 +2466,7 @@ console.log(authToken);
     try {
       // Check if file already exists in the project
       const token = authToken || localStorage.getItem('token');
-      const imagesResponse = await fetch(`http://localhost:8000/api/projects/${currentProject.id}/images`, {
+      const imagesResponse = await fetch(`/api/projects/${currentProject.id}/images`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2160,7 +2486,7 @@ console.log(authToken);
 
       if (!fileAlreadyInProject) {
         // File doesn't exist in project, upload it
-        const fileResponse = await fetch(`http://localhost:8000/api/bulk-upload/files/${file.id}/preview`, {
+        const fileResponse = await fetch(`/api/bulk-upload/files/${file.id}/preview`, {
           credentials: 'include'
         });
         if (!fileResponse.ok) {
@@ -2172,7 +2498,7 @@ console.log(authToken);
         formData.append('file', blob, file.file_name);
         formData.append('project_id', currentProject.id);
 
-        const uploadResponse = await fetch('http://localhost:8000/api/upload', {
+        const uploadResponse = await fetch('/api/upload', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -2192,7 +2518,7 @@ console.log(authToken);
       await loadProjectImages();
       
       // Find and load the image that matches this file
-      const imagesResponse2 = await fetch(`http://localhost:8000/api/projects/${currentProject.id}/images`, {
+      const imagesResponse2 = await fetch(`/api/projects/${currentProject.id}/images`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2221,11 +2547,11 @@ console.log(authToken);
 
   const loadProjectImages = async (projectId = null) => {
     const idToUse = projectId || (currentProject ? currentProject.id : null);
-    if (!idToUse) return;
+    if (!idToUse) return [];
 
     try {
       const token = authToken || localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/projects/${idToUse}/images`, {
+      const response = await fetch(`/api/projects/${idToUse}/images`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2266,8 +2592,11 @@ console.log(authToken);
         setAnnotations([]);
         redrawCanvas();
       }
+      // Return the images so callers can use them
+      return imagesData;
     } catch (error) {
       console.error('Error loading images:', error);
+      return [];
     }
   };
 
@@ -2283,7 +2612,7 @@ console.log(authToken);
     if (imageToLoad && imageToLoad.id) {
       try {
         const token = authToken || localStorage.getItem('token');
-        const response = await fetch(`http://localhost:8000/api/images/${imageToLoad.id}/annotations`, {
+        const response = await fetch(`/api/images/${imageToLoad.id}/annotations`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -2325,7 +2654,7 @@ console.log(authToken);
       showToastMessage('❌ Error loading image');
       console.error('Failed to load image:', imageToLoad.filepath);
     };
-    img.src = `http://localhost:8000/uploads/${normalizeFilePath(imageToLoad.filepath)}`;
+    img.src = `/uploads/${normalizeFilePath(imageToLoad.filepath)}`;
   };
 
   const loadImage = async (index) => {
@@ -2334,6 +2663,11 @@ console.log(authToken);
     const imageToLoad = images[index];
     setCurrentImageIndex(index);
     setSelectedAnnotationIndex(-1);
+
+    // ✅ Auto-save current image index per project for resuming
+    if (currentProject) {
+      localStorage.setItem(`lastImageIndex_${currentProject.id}`, index);
+    }
 
     // Don't clear annotations immediately - wait until new image is ready to prevent flickering
     // setAnnotations([]); // Removed to prevent flickering
@@ -2368,7 +2702,7 @@ console.log(authToken);
     if (imageToLoad && imageToLoad.id) {
       try {
         const token = authToken || localStorage.getItem('token');
-        const response = await fetch(`http://localhost:8000/api/images/${imageToLoad.id}/annotations`, {
+        const response = await fetch(`/api/images/${imageToLoad.id}/annotations`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -2415,7 +2749,7 @@ console.log(authToken);
       imageLoaded = true;
       checkAndRedraw();
     };
-    img.src = `http://localhost:8000/uploads/${normalizeFilePath(imageToLoad.filepath)}`;
+    img.src = `/uploads/${normalizeFilePath(imageToLoad.filepath)}`;
   };
 
   const fitImageToCanvas = () => {
@@ -2471,7 +2805,7 @@ console.log(authToken);
         height: annotation.height
       } : { points: annotation.points, brushSize: annotation.brushSize || 10 };
 
-      const response = await fetch('http://localhost:8000/api/annotations', {
+      const response = await fetch('/api/annotations', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -2502,7 +2836,7 @@ console.log(authToken);
 
     try {
       const token = authToken || localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/images/${currentImage.id}/annotations`, {
+      const response = await fetch(`/api/images/${currentImage.id}/annotations`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2538,7 +2872,7 @@ console.log(authToken);
     try {
       const token = authToken || localStorage.getItem('token');
       if (annotation.id) {
-        await fetch(`http://localhost:8000/api/annotations/${annotation.id}`, { 
+        await fetch(`/api/annotations/${annotation.id}`, { 
           method: 'DELETE',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -2566,7 +2900,7 @@ console.log(authToken);
       if (last.id) {
         try {
           const token = authToken || localStorage.getItem('token');
-          await fetch(`http://localhost:8000/api/annotations/${last.id}`, { 
+          await fetch(`/api/annotations/${last.id}`, { 
             method: 'DELETE',
             headers: {
               'Authorization': `Bearer ${token}`
@@ -2576,11 +2910,33 @@ console.log(authToken);
           console.error('Error deleting annotation:', error);
         }
       }
+      setRedoStack(prev => [...prev, last]);
       setAnnotations(prev => prev.slice(0, -1));
-      updateStats();
+      if (typeof updateStats === 'function') updateStats();
       redrawCanvas();
       showToastMessage('↶ Annotation undone');
     }
+  };
+
+  const redoAnnotation = async () => {
+    if (redoStack.length === 0) return;
+    
+    const lastUndone = redoStack[redoStack.length - 1];
+    setRedoStack(prev => prev.slice(0, -1));
+    
+    const { id, ...annotationData } = lastUndone;
+    const tempId = Date.now();
+    const newAnnotation = {
+      ...annotationData,
+      id: tempId
+    };
+    
+    setAnnotations(prev => [...prev, newAnnotation]);
+    saveToDatabase(newAnnotation);
+    
+    if (typeof updateStats === 'function') updateStats();
+    redrawCanvas();
+    showToastMessage('↷ Annotation redone');
   };
 
   const clearCanvas = async () => {
@@ -2591,7 +2947,7 @@ console.log(authToken);
     const deletePromises = annotations
       .filter(ann => ann.id)
       .map(ann =>
-        fetch(`http://localhost:8000/api/annotations/${ann.id}`, { 
+        fetch(`/api/annotations/${ann.id}`, { 
           method: 'DELETE',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -2691,7 +3047,7 @@ console.log(authToken);
 
     try {
       console.log('Exporting project ID:', projectIdToExport, 'Project name:', currentProject.name);
-      const response = await fetch('http://localhost:8000/api/export', {
+      const response = await fetch('/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3045,6 +3401,42 @@ console.log(authToken);
           font-size: 12px;
           font-weight: 600;
           float: right;
+        }
+        .bw-file-upload-icon {
+          color: #000000 !important;
+          margin-bottom: 20px !important;
+          display: flex !important;
+          justify-content: center !important;
+        }
+
+        /* Premium B&W Spinner */
+        .bw-spinner {
+          width: 42px;
+          height: 42px;
+          border: 3px solid #f0f0f0;
+          border-top: 3px solid #000000;
+          border-radius: 50%;
+          animation: bw-spin 0.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+          margin: 0 auto 24px;
+        }
+
+        @keyframes bw-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+
+        .bw-loading-text {
+          font-size: 18px;
+          font-weight: 700;
+          color: #000;
+          margin: 0;
+          letter-spacing: -0.5px;
+        }
+
+        .bw-loading-subtext {
+          font-size: 13px;
+          color: #666;
+          margin-top: 8px;
         }
         .brush-preview {
           width: 100%;
@@ -3430,67 +3822,70 @@ console.log(authToken);
         .project-list {
           display: flex;
           flex-direction: column;
-          gap: 10px;
+          gap: 12px;
           max-height: 400px;
           overflow-y: auto;
+          padding-right: 8px;
         }
         .project-list-item {
-          background: #2a2a3e;
-          padding: 15px;
+          background: #ffffff;
+          padding: 16px 20px;
           border-radius: 10px;
           cursor: pointer;
-          transition: all 0.3s;
-          border: 2px solid transparent;
+          transition: all 0.2s ease;
+          border: 1px solid #e5e5e5;
           display: flex;
           justify-content: space-between;
           align-items: center;
-          gap: 10px;
+          gap: 15px;
         }
         .project-list-item:hover {
-          background: #3a3a4e;
-          border-color: #667eea;
+          background: #fafafa;
+          border-color: #000000;
         }
         .project-list-item.active {
-          border-color: #667eea;
-          background: rgba(102,126,234,0.1);
+          border: 2px solid #000000;
+          background: #ffffff;
         }
         .project-list-item-content {
           flex: 1;
-          cursor: pointer;
         }
         .project-list-name {
-          color: white;
-          font-weight: 600;
+          color: #000000;
+          font-weight: 700;
           font-size: 16px;
-          margin-bottom: 5px;
+          margin-bottom: 2px;
+          letter-spacing: -0.3px;
         }
         .project-list-meta {
           font-size: 12px;
-          color: #888;
+          color: #666;
+          font-weight: 400;
         }
         .project-list-item-actions {
           display: flex;
-          gap: 5px;
+          gap: 8px;
         }
         .project-delete-btn {
-          background: rgba(229, 62, 62, 0.2);
-          border: none;
+          background: #fff;
+          border: 1px solid #e5e5e5;
           color: #e53e3e;
           cursor: pointer;
-          width: 32px;
-          height: 32px;
-          border-radius: 6px;
+          width: 34px;
+          height: 34px;
+          border-radius: 8px;
           display: flex;
           align-items: center;
           justify-content: center;
           transition: all 0.2s;
-          font-size: 16px;
+          font-size: 14px;
           flex-shrink: 0;
         }
         .project-delete-btn:hover {
-          background: #e53e3e;
-          color: white;
-          transform: scale(1.1);
+          background: #fee2e2;
+          border-color: #fecaca;
+          color: #ef4444;
+          transform: translateY(-1px);
         }
         ::-webkit-scrollbar {
           width: 10px;
@@ -3535,15 +3930,57 @@ console.log(authToken);
         <div className="sidebar">
           <div className="sidebar-section">
             <div className="sidebar-main-title mb-3">{currentProject ? currentProject.name : 'No Project Selected'}</div>
+            <button
+              className="btn btn-secondary"
+              title="Create a new project"
+              onClick={() => {
+                // Clear the active project — welcome screen becomes visible automatically
+                setCurrentProject(null);
+                setCurrentImage(null);
+                setImages([]);
+                setAnnotations([]);
+                setCurrentImageIndex(0);
+                setSelectedAnnotationIndex(-1);
+                setImageObj(null);
+                setClasses([]);
+                setCurrentClass(null);
+                sessionStorage.removeItem('activeProjectId');
+              }}
+              style={{
+                width: '100%',
+                marginBottom: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                fontSize: '13px',
+                fontWeight: '600',
+                padding: '9px 12px',
+                borderRadius: '8px',
+                border: '1px dashed rgba(102, 126, 234, 0.5)',
+                background: 'rgba(102, 126, 234, 0.08)',
+                color: 'rgba(255,255,255,0.85)',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                letterSpacing: '0.3px',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(102,126,234,0.18)'; e.currentTarget.style.borderColor = 'rgba(102,126,234,0.8)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(102,126,234,0.08)'; e.currentTarget.style.borderColor = 'rgba(102,126,234,0.5)'; }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              New Project
+            </button>
             <div className="sidebar-title mb-2">Manual Annotation</div>
             <div className="tool-grid">
               <div className={`tool-btn ${currentTool === 'select' ? 'active' : ''}`} data-tool="select" onClick={() => selectTool('select')}>
-                <div className="tool-icon">👆</div>
-                <div className="tool-name">Select</div>
+                <div className="tool-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3l14 9-7 1-4 7z"/></svg></div>
+                <div className="tool-name">Select <span style={{ opacity: 0.5, fontSize: '10px' }}>(S)</span></div>
               </div>
               <div className={`tool-btn ${currentTool === 'bbox' ? 'active' : ''}`} data-tool="bbox" onClick={() => selectTool('bbox')}>
-                <div className="tool-icon">⬜</div>
-                <div className="tool-name">Box</div>
+                <div className="tool-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9" strokeDasharray="2 2"/><line x1="9" y1="3" x2="9" y2="21" strokeDasharray="2 2"/></svg></div>
+                <div className="tool-name">Box <span style={{ opacity: 0.5, fontSize: '10px' }}>(B)</span></div>
               </div>
               <div
                 className="tool-btn-wrapper"
@@ -3551,8 +3988,8 @@ console.log(authToken);
                 onMouseLeave={() => setShowPolygonTooltip(false)}
               >
                 <div className={`tool-btn ${currentTool === 'polygon' ? 'active' : ''}`} data-tool="polygon" onClick={() => selectTool('polygon')}>
-                  <div className="tool-icon">🔷</div>
-                  <div className="tool-name">Polygon</div>
+                  <div className="tool-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/><circle cx="12" cy="2" r="1.5" fill="currentColor"/><circle cx="22" cy="8.5" r="1.5" fill="currentColor"/><circle cx="22" cy="15.5" r="1.5" fill="currentColor"/><circle cx="12" cy="22" r="1.5" fill="currentColor"/><circle cx="2" cy="15.5" r="1.5" fill="currentColor"/><circle cx="2" cy="8.5" r="1.5" fill="currentColor"/></svg></div>
+                  <div className="tool-name">Polygon <span style={{ opacity: 0.5, fontSize: '10px' }}>(P)</span></div>
                 </div>
                 {showPolygonTooltip && (
                   <div className="tooltip show">
@@ -3561,18 +3998,38 @@ console.log(authToken);
                 )}
               </div>
               <div className={`tool-btn ${currentTool === 'brush' ? 'active' : ''}`} data-tool="brush" onClick={() => selectTool('brush')}>
-                <div className="tool-icon">🖌️</div>
+                <div className="tool-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1 1 2.48 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg></div>
                 <div className="tool-name">Brush</div>
               </div>
             </div>
             <div className="sidebar-title mb-2">AI Annotation</div>
             <div className="tool-grid">
+              <div 
+                className={`tool-btn smart-select-premium ${currentTool === 'smart-select' ? 'active' : ''}`} 
+                data-tool="smart-select" 
+                onClick={() => selectTool('smart-select')}
+                title="AI-assisted interactive segmentation"
+              >
+                <div className="tool-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.21 1.21 0 0 0 1.72 0L21.64 5.36a1.21 1.21 0 0 0 0-1.72Z"/>
+                    <path d="m14 7 3 3"/>
+                    <path d="M5 6v1"/>
+                    <path d="M19 17v1"/>
+                    <path d="M20 8l1 .2"/>
+                    <path d="M7 2l.2 1"/>
+                    <path d="M15 22l.2-1"/>
+                    <path d="M19 11l.2.2"/>
+                  </svg>
+                </div>
+                <div className="tool-name text-center">Smart Select</div>
+              </div>
               <div className={`tool-btn ${currentTool === 'ai-annotation' ? 'active' : ''}`} data-tool="ai-annotation" onClick={() => selectTool('ai-annotation')}>
-                <div className="tool-icon">🤖</div>
+                <div className="tool-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/><circle cx="9" cy="9" r="1" fill="currentColor"/><circle cx="15" cy="9" r="1" fill="currentColor"/><circle cx="9" cy="15" r="1" fill="currentColor"/><circle cx="15" cy="15" r="1" fill="currentColor"/></svg></div>
                 <div className="tool-name text-center">Image Annotation</div>
               </div>
               <div className={`tool-btn ${currentTool === 'docs-annotation' ? 'active' : ''}`} data-tool="docs-annotation" onClick={() => selectTool('docs-annotation')}>
-                <div className="tool-icon">📄</div>
+                <div className="tool-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></div>
                 <div className="tool-name text-center">Docs Annotation</div>
               </div>
             </div>
@@ -3595,110 +4052,116 @@ console.log(authToken);
           </div>
 
           <div className="sidebar-section">
-            <div className="sidebar-title mb-2">Classes</div>
+            <div className="sidebar-title mb-2">🏷️ Classes</div>
             <div style={{ position: 'relative' }}>
               {/* Dropdown Button */}
               <div
                 className={`class-dropdown-btn ${showClassDropdown ? 'active' : ''}`}
                 onClick={() => setShowClassDropdown(!showClassDropdown)}
                 style={{
-                  background: '#2a2a3e',
-                  padding: '12px',
-                  borderRadius: '8px',
+                  background: '#141414',
+                  padding: '10px 14px',
+                  borderRadius: '6px',
                   cursor: 'pointer',
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
-                  border: '2px solid',
-                  borderColor: currentClass ? getClassColor(currentClass) : '#2a2a3e',
-                  transition: 'all 0.3s'
+                  border: '1px solid',
+                  borderColor: showClassDropdown ? '#555' : '#2a2a2a',
+                  transition: 'all 0.2s ease',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
                 }}
+                onMouseEnter={(e) => e.currentTarget.style.borderColor = '#4a4a4a'}
+                onMouseLeave={(e) => e.currentTarget.style.borderColor = showClassDropdown ? '#555' : '#2a2a2a'}
               >
                 <div className="class-info" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   {currentClass ? (
                     <>
                       <div className="class-color" style={{
                         background: getClassColor(currentClass),
-                        width: '20px',
-                        height: '20px',
-                        borderRadius: '4px'
+                        width: '12px',
+                        height: '12px',
+                        borderRadius: '3px',
+                        boxShadow: 'auto'
                       }}></div>
-                      <span>{currentClass}</span>
+                      <span style={{ fontSize: '13px', fontWeight: '500', color: '#eaeaea' }}>{currentClass}</span>
                       <span className="class-count" style={{
-                        background: 'rgba(255,255,255,0.1)',
-                        padding: '2px 8px',
-                        borderRadius: '12px',
-                        fontSize: '11px'
+                        background: 'rgba(255,255,255,0.08)',
+                        color: '#aaa',
+                        padding: '1px 6px',
+                        borderRadius: '10px',
+                        fontSize: '10px',
+                        fontWeight: '600'
                       }}>{classCounts[currentClass] || 0}</span>
                     </>
                   ) : (
-                    <span style={{ color: '#888' }}>Select a class...</span>
+                    <span style={{ color: '#777', fontSize: '13px' }}>Select a class...</span>
                   )}
                 </div>
-                <span style={{ fontSize: '12px', color: '#888' }}>{showClassDropdown ? '▲' : '▼'}</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#777" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: showClassDropdown ? 'rotate(180deg)' : 'rotate(0)' , transition: 'transform 0.2s' }}>
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
               </div>
 
               {/* Dropdown Menu */}
               {showClassDropdown && (
                 <div className="class-dropdown-menu" style={{
                   position: 'absolute',
-                  top: '100%',
+                  top: 'calc(100% + 4px)',
                   left: 0,
                   right: 0,
-                  background: '#1a1a2e',
-                  border: '1px solid #2a2a3e',
-                  borderRadius: '8px',
-                  marginTop: '5px',
-                  maxHeight: '300px',
+                  background: '#1a1a1a',
+                  border: '1px solid #333',
+                  borderRadius: '6px',
+                  maxHeight: '260px',
                   overflowY: 'auto',
                   zIndex: 1000,
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                  padding: '4px'
                 }}>
                   {classes.length === 0 ? (
-                    <div style={{ padding: '15px', textAlign: 'center', color: '#888' }}>No classes yet</div>
+                    <div style={{ padding: '12px', textAlign: 'center', color: '#666', fontSize: '12px' }}>No classes yet</div>
                   ) : (
                     classes.map((className, index) => (
-                <div
-                  key={index}
+                      <div
+                        key={index}
                         className={`class-item ${currentClass === className ? 'active' : ''}`}
                         onClick={() => {
                           selectClass(className);
                           setShowClassDropdown(false);
                         }}
                         style={{
-                          background: currentClass === className ? 'rgba(102,126,234,0.1)' : '#2a2a3e',
-                          padding: '12px',
-                          borderBottom: index < classes.length - 1 ? '1px solid #2a2a3e' : 'none',
+                          background: currentClass === className ? 'rgba(255,255,255,0.05)' : 'transparent',
+                          padding: '8px 10px',
+                          borderRadius: '4px',
                           cursor: 'pointer',
-                          transition: 'all 0.3s',
+                          transition: 'background 0.15s ease',
                           display: 'flex',
                           justifyContent: 'space-between',
-                          alignItems: 'center'
+                          alignItems: 'center',
+                          marginTop: index > 0 ? '2px' : '0'
                         }}
                         onMouseEnter={(e) => {
-                          if (currentClass !== className) {
-                            e.currentTarget.style.background = '#3a3a4e';
-                          }
+                          if (currentClass !== className) e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
                         }}
                         onMouseLeave={(e) => {
-                          if (currentClass !== className) {
-                            e.currentTarget.style.background = '#2a2a3e';
-                          }
+                          if (currentClass !== className) e.currentTarget.style.background = 'transparent';
                         }}
                       >
                         <div className="class-info" style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
                           <div className="class-color" style={{
                             background: getClassColor(className),
-                            width: '20px',
-                            height: '20px',
-                            borderRadius: '4px'
+                            width: '10px',
+                            height: '10px',
+                            borderRadius: '3px'
                           }}></div>
-                          <span style={{ flex: 1 }}>{className}</span>
+                          <span style={{ flex: 1, fontSize: '13px', color: currentClass === className ? '#fff' : '#ccc' }}>{className}</span>
                           <span className="class-count" style={{
-                            background: 'rgba(255,255,255,0.1)',
-                            padding: '2px 8px',
-                            borderRadius: '12px',
-                            fontSize: '11px'
+                            background: currentClass === className ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)',
+                            color: currentClass === className ? '#fff' : '#888',
+                            padding: '1px 6px',
+                            borderRadius: '10px',
+                            fontSize: '10px'
                           }}>{classCounts[className] || 0}</span>
                         </div>
                         <button
@@ -3709,22 +4172,29 @@ console.log(authToken);
                           }}
                           title="Delete class"
                           style={{
-                            width: '24px',
-                            height: '24px',
+                            width: '20px',
+                            height: '20px',
                             padding: '0',
-                            fontSize: '14px',
+                            fontSize: '12px',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                             background: 'transparent',
                             border: 'none',
-                            color: '#ff6b6b',
+                            color: '#666',
                             cursor: 'pointer',
-                            borderRadius: '4px',
-                            marginLeft: '8px'
+                            borderRadius: '3px',
+                            marginLeft: '8px',
+                            transition: 'color 0.2s, background 0.2s'
                           }}
-                          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,107,107,0.2)'}
-                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(255,68,68,0.1)';
+                            e.currentTarget.style.color = '#ff4444';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                            e.currentTarget.style.color = '#666';
+                          }}
                         >
                           ✕
                         </button>
@@ -3734,21 +4204,54 @@ console.log(authToken);
                 </div>
               )}
             </div>
-            <button className="btn btn-secondary" style={{ width: '100%', marginTop: '10px' }} onClick={handleAddClass}>➕ Add Class</button>
+            
+            <button 
+              onClick={handleAddClass}
+              style={{ 
+                width: '100%', 
+                marginTop: '10px',
+                background: 'transparent',
+                border: '1px dashed #444',
+                color: '#aaa',
+                padding: '10px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: '500',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#888';
+                e.currentTarget.style.color = '#fff';
+                e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#444';
+                e.currentTarget.style.color = '#aaa';
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              Add Class
+            </button>
           </div>
 
           {(currentProject || currentImage) && (
           <div className="sidebar-section">
             <div className="sidebar-title mb-2">Images</div>
             {projectMode === 'create-project' && (
-            <button className="btn btn-primary" style={{ width: '100%', marginBottom: '10px' }} onClick={() => {
+            <button className="btn btn-primary" style={{ width: '100%', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px' }} onClick={() => {
               // Close other modals first
               setShowAssignedFilesModal(false);
               setShowProjectListModal(false);
               setShowProjectModal(false);
               setShowExportModal(false);
               setShowUploadModal(true);
-            }}>📤 Upload</button>
+            }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Upload</button>
             )}
             {projectMode === 'assigned-files' && (
               <div style={{ 
@@ -3759,12 +4262,16 @@ console.log(authToken);
                 marginBottom: '10px',
                 color: '#4ECDC4',
                 fontSize: '13px',
-                textAlign: 'center'
+                textAlign: 'center',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '7px'
               }}>
-                📋 Working with Assigned Files
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Working with Assigned Files
               </div>
             )}
-            
+
             {/* Uploaded PDF Pages Display */}
             {uploadedPdfPages.length > 0 && (
               <div style={{ marginBottom: '10px' }}>
@@ -3772,9 +4279,12 @@ console.log(authToken);
                   fontSize: '12px', 
                   color: '#888', 
                   marginBottom: '8px',
-                  fontWeight: '600'
+                  fontWeight: '600',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
                 }}>
-                  📄 Converted PDF Pages
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg> Converted PDF Pages
                 </div>
                 <div style={{ 
                   maxHeight: '300px', 
@@ -3855,7 +4365,7 @@ console.log(authToken);
                             title={`Page ${frameIndex + 1} - Click to load`}
                           >
                             <img
-                              src={`http://localhost:8000/uploads/${frame.filepath.replace(/\\/g, '/')}`}
+                              src={`/uploads/${frame.filepath.replace(/\\/g, '/')}`}
                               alt={`Page ${frameIndex + 1}`}
                               style={{
                                 width: '100%',
@@ -3947,7 +4457,7 @@ console.log(authToken);
                       </button>
                     )}
                     <img 
-                      src={`http://localhost:8000/uploads/${normalizeFilePath(img.filepath)}`} 
+                      src={`/uploads/${normalizeFilePath(img.filepath)}`} 
                       alt={img.filename} 
                       onError={(e) => {
                       e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect fill="%232a2a3e" width="100" height="100"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="%23888">No Image</text></svg>';
@@ -3983,7 +4493,7 @@ console.log(authToken);
                 try {
                   // Load existing annotations first to check for duplicates
                   const token = authToken || localStorage.getItem('token');
-                  const existingResponse = await fetch(`http://localhost:8000/api/images/${currentImage.id}/annotations`, {
+                  const existingResponse = await fetch(`/api/images/${currentImage.id}/annotations`, {
                     headers: {
                       'Authorization': `Bearer ${token}`
                     }
@@ -4029,7 +4539,7 @@ console.log(authToken);
                   let failedCount = 0;
                   for (const ann of newAnnotations) {
                     console.log(`💾 Saving: ${ann.class} at (${ann.coordinates.x}, ${ann.coordinates.y}, ${ann.coordinates.width}x${ann.coordinates.height})`);
-                    const response = await fetch('http://localhost:8000/api/annotations', {
+                    const response = await fetch('/api/annotations', {
                       method: 'POST',
                       headers: { 
                         'Content-Type': 'application/json',
@@ -4095,7 +4605,7 @@ console.log(authToken);
                 try {
                   // Load existing annotations first to check for duplicates
                   const token = authToken || localStorage.getItem('token');
-                  const existingResponse = await fetch(`http://localhost:8000/api/images/${currentImage.id}/annotations`, {
+                  const existingResponse = await fetch(`/api/images/${currentImage.id}/annotations`, {
                     headers: {
                       'Authorization': `Bearer ${token}`
                     }
@@ -4117,12 +4627,17 @@ console.log(authToken);
                   };
 
                   // Filter out annotations that already exist
-                  const newAnnotations = annotations.filter(newAnn => {
-                    return !existingData.some(existingAnn => {
-                      return existingAnn.annotation_type === 'bbox' &&
-                        isSimilarBbox(newAnn, existingAnn);
+                  let newAnnotations = [];
+                  if (Array.isArray(existingData)) {
+                    newAnnotations = annotations.filter(newAnn => {
+                      return !existingData.some(existingAnn => {
+                        return existingAnn.annotation_type === 'bbox' &&
+                          isSimilarBbox(newAnn, existingAnn);
+                      });
                     });
-                  });
+                  } else {
+                    newAnnotations = annotations;
+                  }
 
                   if (newAnnotations.length === 0) {
                     showToastMessage('⚠️ All annotations already exist. No new annotations to save.');
@@ -4132,7 +4647,7 @@ console.log(authToken);
                   // Save only new annotations
                   let savedCount = 0;
                   for (const ann of newAnnotations) {
-                    const response = await fetch('http://localhost:8000/api/annotations', {
+                    const response = await fetch('/api/annotations', {
                       method: 'POST',
                       headers: { 
                         'Content-Type': 'application/json',
@@ -4165,120 +4680,6 @@ console.log(authToken);
                 }
               }}
             />
-          ) : currentTool === 'docs-annotation' ? (
-            <DocsAnnotation
-              currentProject={currentProject}
-              images={images}
-              currentImageIndex={currentImageIndex}
-              onImageSelect={loadImage}
-              onSaveAnnotations={async (annotations) => {
-                // Save docs-generated annotations to the project
-                if (!currentProject || !currentImage) {
-                  showToastMessage('⚠️ Please select a project and image first');
-                  return;
-                }
-                try {
-                  let updatedCount = 0;
-                  let createdCount = 0;
-                  let failedCount = 0;
-
-                  // Process each annotation: update if it has an ID, create if it doesn't
-                  for (const ann of annotations) {
-                    if (ann.id) {
-                      // Annotation has an ID - update existing annotation
-                      console.log(`[SAVE] Updating annotation ID ${ann.id}`, ann);
-                      try {
-                        const token = authToken || localStorage.getItem('token');
-                        const response = await fetch(`http://localhost:8000/api/annotations/${ann.id}`, {
-                          method: 'PUT',
-                          headers: { 
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`
-                          },
-                          body: JSON.stringify({
-                            class_name: ann.class || 'object',
-                            annotation_type: ann.type || ann.annotation_type || 'bbox',
-                            coordinates: ann.coordinates
-                          })
-                        });
-                        if (response.ok) {
-                          updatedCount++;
-                          console.log(`[SAVE] Successfully updated annotation ID ${ann.id}`);
-                        } else {
-                          failedCount++;
-                          const errorText = await response.text();
-                          console.error(`[SAVE] Failed to update annotation ${ann.id}:`, errorText);
-                        }
-                      } catch (err) {
-                        failedCount++;
-                        console.error(`[SAVE] Error updating annotation ${ann.id}:`, err);
-                      }
-                    } else {
-                      // Annotation doesn't have an ID - create new annotation
-                      console.log(`[SAVE] Creating new annotation`, ann);
-                      try {
-                        const response = await fetch('http://localhost:8000/api/annotations', {
-                          method: 'POST',
-                          headers: { 
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`
-                          },
-                          body: JSON.stringify({
-                            image_id: currentImage.id,
-                            class_name: ann.class || 'object',
-                            annotation_type: ann.type || ann.annotation_type || 'bbox',
-                            coordinates: ann.coordinates
-                          })
-                        });
-                        if (response.ok) {
-                          createdCount++;
-                          const savedAnn = await response.json();
-                          console.log(`[SAVE] Successfully created annotation with ID ${savedAnn.id}`);
-                        } else {
-                          failedCount++;
-                          const errorText = await response.text();
-                          console.error(`[SAVE] Failed to create annotation:`, errorText);
-                        }
-                      } catch (err) {
-                        failedCount++;
-                        console.error('[SAVE] Error creating annotation:', err);
-                      }
-                    }
-                  }
-
-                  // Show appropriate message based on what was done
-                  if (updatedCount > 0 || createdCount > 0) {
-                    let message = '';
-                    if (updatedCount > 0 && createdCount > 0) {
-                      message = `✅ Updated ${updatedCount} annotation${updatedCount !== 1 ? 's' : ''} and created ${createdCount} new annotation${createdCount !== 1 ? 's' : ''}.`;
-                    } else if (updatedCount > 0) {
-                      message = `✅ Updated ${updatedCount} annotation${updatedCount !== 1 ? 's' : ''}.`;
-                    } else {
-                      message = `✅ Created ${createdCount} new annotation${createdCount !== 1 ? 's' : ''}.`;
-                    }
-                    if (failedCount > 0) {
-                      message += ` ${failedCount} failed.`;
-                    }
-                    showToastMessage(message);
-                    
-                    // Note: DocsAnnotation component handles its own annotation reloading
-                    // Only reload for non-docs-annotation tools to avoid conflicts
-                    if (currentTool !== 'docs-annotation' && currentImage) {
-                      await loadAnnotations();
-                      // Force redraw to ensure annotations are visible
-                      setTimeout(() => {
-                        redrawCanvas();
-                      }, 150);
-                    }
-                  } else if (failedCount > 0) {
-                    showToastMessage(`⚠️ Failed to save ${failedCount} annotation${failedCount !== 1 ? 's' : ''}. Please try again.`);
-                  }
-                } catch (err) {
-                  console.error('Error saving annotations:', err);
-                  showToastMessage('❌ Error saving annotations');
-                }
-              }}
-            />
           ) : (
             <>
               {(currentProject || currentImage) && (
@@ -4290,7 +4691,8 @@ console.log(authToken);
                       <button className="zoom-btn" onClick={zoomIn}>+</button>
                       <button className="zoom-btn" onClick={resetZoom}>⟲</button>
                     </div>
-                    <button className="btn btn-secondary" onClick={undoAnnotation}>↶ Undo</button>
+                    <button className="btn btn-secondary" onClick={undoAnnotation} disabled={annotations.length === 0} title="Undo (Ctrl+Z)" style={{ opacity: annotations.length === 0 ? 0.5 : 1 }}>↶ Undo</button>
+                    <button className="btn btn-secondary" onClick={redoAnnotation} disabled={redoStack.length === 0} title="Redo (Ctrl+Shift+Z)" style={{ opacity: redoStack.length === 0 ? 0.5 : 1 }}>↷ Redo</button>
                     <button
                       className="btn btn-secondary"
                       onClick={() => {
@@ -4317,11 +4719,106 @@ console.log(authToken);
               )}
 
               <div className="canvas-wrapper" ref={canvasWrapperRef}>
+                {currentTool === 'smart-select' && (
+                  <div className="floating-controls-panel">
+                    <div className="floating-controls-title">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+                      Smart Select
+                    </div>
+                    
+                    <div className="mode-toggle-group">
+                      <button 
+                        className={`mode-toggle-btn ${smartSelectMode === 'add' ? 'active' : ''}`}
+                        onClick={() => { setSmartSelectMode('add'); smartSelectModeRef.current = 'add'; }}
+                      >
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#00FF00' }}></div>
+                        Positive
+                      </button>
+                      <button 
+                        className={`mode-toggle-btn ${smartSelectMode === 'remove' ? 'active' : ''}`}
+                        onClick={() => { setSmartSelectMode('remove'); smartSelectModeRef.current = 'remove'; }}
+                      >
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#FF0000' }}></div>
+                        Negative
+                      </button>
+                    </div>
+
+                    <div className="smart-select-actions">
+                      <button className="smart-select-btn" onClick={() => {
+                        smartSelectPointsRef.current = [];
+                        setSmartSelectPoints([]);
+                        setSmartSelectMask(null);
+                        setPendingAnnotation(null);
+                        redrawCanvas();
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                        Reset
+                      </button>
+                      <button className="smart-select-btn" onClick={() => {
+                        const currentPoints = smartSelectPointsRef.current;
+                        if (currentPoints.length > 0) {
+                          const newPoints = [...currentPoints];
+                          newPoints.pop();
+                          smartSelectPointsRef.current = newPoints;
+                          setSmartSelectPoints(newPoints);
+                          if (newPoints.length === 0) {
+                            setSmartSelectMask(null);
+                            setPendingAnnotation(null);
+                            redrawCanvas();
+                          } else {
+                            runSmartSelectInteractive(newPoints);
+                          }
+                        }
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                        Undo
+                      </button>
+                      <button className="smart-select-btn finish" onClick={() => {
+                        if (pendingAnnotation) {
+                          finalizeAnnotation(pendingAnnotation);
+                          smartSelectPointsRef.current = [];
+                          setSmartSelectPoints([]);
+                          setSmartSelectMask(null);
+                        } else {
+                          showToastMessage('⚠️ Please select a region first');
+                        }
+                      }}>
+                        ✨ Convert to Polygon
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {currentImage && currentTool !== 'ai-annotation' && currentTool !== 'docs-annotation' && (
+                  <div className="active-tool-indicator" style={{
+                    position: 'absolute',
+                    top: '20px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    background: 'rgba(0,0,0,0.7)',
+                    color: '#fff',
+                    padding: '8px 16px',
+                    borderRadius: '20px',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    pointerEvents: 'none',
+                    zIndex: 10,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    backdropFilter: 'blur(4px)',
+                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                  }}>
+                    {currentTool === 'select' && '🖱️ Select Tool'}
+                    {currentTool === 'bbox' && '🔲 Box Tool'}
+                    {currentTool === 'polygon' && '🔺 Polygon Tool'}
+                    {currentTool === 'brush' && '🖌️ Brush Tool'}
+                  </div>
+                )}
                 <div className="welcome-screen">
                   <div className="welcome-screen-content">
-                    <div className="welcome-icon"><img src={RoboSpectraLogo} alt="Product Logo" style={{ height: '100px', width: 'auto' }} /></div>
-                    <div className="welcome-title">Welcome to RoboSpectra</div>
-                    <div className="welcome-subtitle">Professional Image Annotation Platform</div>
+                    <div className="welcome-icon"><img src={MotionFrameLogo} alt="MotionFrame" style={{ height: '60px', width: 'auto', filter: 'invert(1)' }} /></div>
+                    <div className="welcome-title">Welcome to MotionFrame</div>
+                    <div className="welcome-subtitle">Professional AI Annotation Platform</div>
                     <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', marginTop: '20px' }}>
                       <button className="btn btn-primary" onClick={() => setShowProjectModal(true)} style={{ fontSize: '16px', padding: '16px' }}>Create Your Project</button>
                       <button className="btn btn-secondary" onClick={() => {
@@ -4330,7 +4827,10 @@ console.log(authToken);
                         loadAssignedFiles().catch(err => {
                           console.error('Error loading assigned files:', err);
                         });
-                      }} style={{ fontSize: '16px', padding: '16px' }}>📋 Assigned Project</button>
+                      }} style={{ fontSize: '14px', padding: '14px 18px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        Assigned Project
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -4345,6 +4845,7 @@ console.log(authToken);
                     redrawCanvas();
                   }}
                   onDoubleClick={handleDoubleClick}
+                  onContextMenu={(e) => e.preventDefault()}
                 ></canvas>
               </div>
             </>
@@ -4432,8 +4933,177 @@ console.log(authToken);
                 loadProjectList(); 
                 setShowProjectListModal(true); 
               }}>📁 History</button> */}
-              <button className="btn btn-secondary texts" onClick={() => setShowExportModal(true)}>📦 Export</button>
             </div>
+
+            <div className="sidebar-section">
+              <div className="sidebar-title">Export Data</div>
+              <button className="btn btn-secondary texts" onClick={() => setShowExportModal(true)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Export
+              </button>
+            </div>
+
+            {currentProject && (
+              <div className="sidebar-section">
+                <div className="sidebar-title">Training & Models</div>
+                
+                {/* Version Badge */}
+                {versionStatus === 'ready' && (
+                  <div style={{ background: 'rgba(39,174,96,0.1)', border: '1px solid rgba(39,174,96,0.3)', borderRadius: '6px', padding: '8px', marginBottom: '8px', color: '#2ecc71', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>✅</span> Version ready: {versionLabel}
+                  </div>
+                )}
+                
+                {/* Generate / Train Button */}
+                {versionStatus !== 'ready' ? (
+                  <button
+                    className="btn btn-secondary texts"
+                    disabled={versionStatus === 'generating'}
+                    onClick={async () => {
+                      if (!currentProject) { showToastMessage('⚠️ Open a project first'); return; }
+                      setVersionStatus('generating');
+                      setVersionLabel('');
+                      try {
+                        const token = authToken || localStorage.getItem('token');
+                        const res = await fetch('/api/dataset/export-version', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                          body: JSON.stringify({ project_id: currentProject.id })
+                        });
+                        if (!res.ok) {
+                          const err = await res.json().catch(() => ({}));
+                          throw new Error(err.detail || `HTTP ${res.status}`);
+                        }
+                        const data = await res.json();
+                        const vid = data.version_meta?.version_id || 'v?';
+                        setVersionStatus('ready');
+                        setVersionLabel(vid);
+                      } catch (e) {
+                        setVersionStatus('error');
+                        setVersionLabel(e.message || 'Failed');
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '7px',
+                      background: versionStatus === 'error' ? 'rgba(231,76,60,0.1)' : 'rgba(102,126,234,0.12)',
+                      border: `1px solid ${versionStatus === 'error' ? 'rgba(231,76,60,0.4)' : 'rgba(102,126,234,0.4)'}`,
+                      color: versionStatus === 'error' ? '#e74c3c' : 'rgba(255,255,255,0.85)',
+                    }}
+                  >
+                    {versionStatus === 'generating' ? (
+                      <><span style={{ fontSize: '11px', opacity: 0.7, animation: 'pulse 1s infinite' }}>⏳</span> Generating…</>
+                    ) : (
+                      <>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                          <line x1="8" y1="21" x2="16" y2="21"/>
+                          <line x1="12" y1="17" x2="12" y2="21"/>
+                        </svg>
+                        Generate Training Version
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <div style={{ display: 'flex', gap: '6px', flexDirection: 'column' }}>
+                    <button
+                      onClick={() => navigate(`/training/config?projectId=${currentProject.id}&projectType=${encodeURIComponent(currentProject.project_type || 'object-detection')}`)}
+                      style={{
+                        width: '100%', padding: '9px 0',
+                        background: 'rgba(255,255,255,0.9)',
+                        border: 'none', borderRadius: '7px',
+                        color: '#000', fontWeight: '700', fontSize: '11px',
+                        cursor: 'pointer', display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', gap: '6px',
+                        letterSpacing: '0.2px',
+                      }}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                      </svg>
+                      Train Model
+                    </button>
+                    <button
+                      onClick={() => { setVersionStatus('idle'); setVersionLabel(''); }}
+                      style={{
+                        width: '100%', padding: '5px 0',
+                        background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '7px',
+                        color: 'rgba(255,255,255,0.5)', fontSize: '11px', cursor: 'pointer'
+                      }}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+                
+                {/* Error Status */}
+                {versionStatus === 'error' && (
+                  <div style={{ color: '#e74c3c', fontSize: '11px', marginTop: '6px', textAlign: 'center' }}>
+                    <span>❌</span> {versionLabel}
+                  </div>
+                )}
+
+                <button
+                  className="btn btn-secondary texts"
+                  onClick={() => navigate(`/models?projectId=${currentProject.id}`)}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '7px',
+                    marginTop: '12px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)'
+                  }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                    <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                  </svg>
+                  Model Registry
+                </button>
+              </div>
+            )}
+
+            <div className="sidebar-section">
+              <div className="sidebar-title">Selected Object</div>
+              {selectedAnnotationIndex !== -1 && annotations[selectedAnnotationIndex] ? (
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 2px 8px rgba(0,0,0,0.2)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                    <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: getClassColor(annotations[selectedAnnotationIndex].class), boxShadow: `0 0 6px ${getClassColor(annotations[selectedAnnotationIndex].class)}` }}></div>
+                    <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#fff' }}>{annotations[selectedAnnotationIndex].class}</span>
+                  </div>
+                  {annotations[selectedAnnotationIndex].type === 'bbox' && (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#aaa', marginBottom: '6px' }}>
+                        <span>Dimensions</span>
+                        <span style={{ color: '#fff', fontWeight: '500' }}>{Math.round(annotations[selectedAnnotationIndex].coordinates?.width || annotations[selectedAnnotationIndex].width || 0)} × {Math.round(annotations[selectedAnnotationIndex].coordinates?.height || annotations[selectedAnnotationIndex].height || 0)} px</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#aaa' }}>
+                        <span>Area</span>
+                        <span style={{ color: '#fff', fontWeight: '500' }}>{Math.round((annotations[selectedAnnotationIndex].coordinates?.width || annotations[selectedAnnotationIndex].width || 0) * (annotations[selectedAnnotationIndex].coordinates?.height || annotations[selectedAnnotationIndex].height || 0))} px²</span>
+                      </div>
+                    </>
+                  )}
+                  {annotations[selectedAnnotationIndex].type === 'polygon' && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#aaa' }}>
+                      <span>Points</span>
+                      <span style={{ color: '#fff', fontWeight: '500' }}>{annotations[selectedAnnotationIndex].coordinates?.points?.length || annotations[selectedAnnotationIndex].points?.length || annotations[selectedAnnotationIndex].coordinates?.length || 0} vertices</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ padding: '16px 12px', textAlign: 'center', background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: '8px', color: '#666', fontSize: '12px' }}>
+                  No object selected
+                </div>
+              )}
+            </div>
+
             <div className="sidebar-title">Annotations ({annotations.length})</div>
             <div className="annotation-list">
               {annotations.map((ann, index) => (
@@ -4448,7 +5118,37 @@ console.log(authToken);
                       {ann.class}
                     </span>
                     <div className="annotation-actions">
-                      <button className="icon-btn delete" onClick={(e) => { e.stopPropagation(); deleteAnnotation(index); }} title="Delete">🗑️</button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); deleteAnnotation(index); }} 
+                        title="Delete Annotation"
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#ff4d4d',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: '6px',
+                          borderRadius: '6px',
+                          transition: 'all 0.2s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'rgba(255, 77, 77, 0.15)';
+                          e.currentTarget.style.transform = 'scale(1.1)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.transform = 'scale(1)';
+                        }}
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6"></polyline>
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                          <line x1="10" y1="11" x2="10" y2="17"></line>
+                          <line x1="14" y1="11" x2="14" y2="17"></line>
+                        </svg>
+                      </button>
                     </div>
                   </div>
                   <div className="annotation-details">Type: {ann.type}</div>
@@ -4459,15 +5159,18 @@ console.log(authToken);
 
           <div className="sidebar-section">
             <div className="sidebar-title statistics-title">Statistics</div>
-            <div style={{ fontSize: '13px', color: '#e0e0e0' }}>
-              <div style={{ marginBottom: '10px' }}>
-                <strong>Total Images:</strong> {images.length}
+            <div style={{ fontSize: '13px', background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.08)', marginBottom: '10px' }}>
+                <span style={{ color: '#888' }}>Total Images</span>
+                <span style={{ fontWeight: '600', color: '#fff' }}>{images.length}</span>
               </div>
-              <div style={{ marginBottom: '10px' }}>
-                <strong>Annotated:</strong> {annotatedImagesCount}
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.08)', marginBottom: '10px' }}>
+                <span style={{ color: '#888' }}>Annotated</span>
+                <span style={{ fontWeight: '600', color: '#fff' }}>{annotatedImagesCount}</span>
               </div>
-              <div style={{ marginBottom: '10px' }}>
-                <strong>Total Objects:</strong> {annotations.length}
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#888' }}>Total Objects</span>
+                <span style={{ fontWeight: '600', color: '#fff' }}>{annotations.length}</span>
               </div>
             </div>
           </div>
@@ -4476,33 +5179,32 @@ console.log(authToken);
 
       {/* Project Modal */}
       {showProjectModal && (
-        <div className="modal" onClick={(e) => { if (e.target.className === 'modal') setShowProjectModal(false); }}>
-          <div className="modal-content">
-            <div className="modal-header">Create New Project</div>
+        <div className="modal bw-modal-overlay" onClick={(e) => { if (e.target.classList.contains('bw-modal-overlay') || e.target.classList.contains('modal')) setShowProjectModal(false); }}>
+          <div className="modal-content bw-modal">
+            <div className="bw-modal-header">
+              <h3 style={{ margin: 0, fontWeight: 700, fontSize: '22px', letterSpacing: '-0.5px' }}>Create New Project</h3>
+              <p style={{ margin: '6px 0 0 0', fontSize: '13px', color: '#666', fontWeight: 400 }}>Set up your workspace for annotation</p>
+            </div>
             <form onSubmit={createProject}>
-              <div className="form-group">
-                <label className="form-label">Project Name</label>
-                <input type="text" className="form-input" value={projectName} onChange={(e) => setProjectName(e.target.value)} placeholder="My Detection Project" required />
+              <div className="bw-form-group">
+                <label className="bw-label">Project Name</label>
+                <input type="text" className="bw-input" value={projectName} onChange={(e) => setProjectName(e.target.value)} placeholder="e.g. My Detection Project" required />
               </div>
-              <div className="form-group">
-                <label className="form-label">Project Type</label>
-                <select className="form-select" value={projectType} onChange={(e) => setProjectType(e.target.value)} required>
+              <div className="bw-form-group">
+                <label className="bw-label">Project Type</label>
+                <select className="bw-select" value={projectType} onChange={(e) => setProjectType(e.target.value)} required>
                   <option value="object-detection">Object Detection</option>
                   <option value="segmentation">Instance Segmentation</option>
                   <option value="classification">Classification</option>
                 </select>
               </div>
-              <div className="form-group">
-                <label className="form-label">Description</label>
-                <textarea className="form-textarea" value={projectDescription} onChange={(e) => setProjectDescription(e.target.value)} placeholder="Describe your project..."></textarea>
+              <div className="bw-form-group">
+                <label className="bw-label">Description</label>
+                <textarea className="bw-textarea" value={projectDescription} onChange={(e) => setProjectDescription(e.target.value)} placeholder="Describe your project..."></textarea>
               </div>
-              {/* <div className="form-group">
-                <label className="form-label">Class Labels (comma-separated) <span style={{ color: '#888', fontSize: '12px', fontWeight: 'normal' }}>(Optional)</span></label>
-                <input type="text" className="form-input" value={projectClasses} onChange={(e) => setProjectClasses(e.target.value)} placeholder="person, car, dog" />
-              </div> */}
-              <div className="modal-actions">
-                <button type="button" className="btn btn-cancel" onClick={() => setShowProjectModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-submit">Create Project</button>
+              <div className="bw-modal-actions">
+                <button type="button" className="btn bw-btn-cancel" onClick={() => setShowProjectModal(false)}>Cancel</button>
+                <button type="submit" className="btn bw-btn-submit">Create Project</button>
               </div>
             </form>
           </div>
@@ -4511,17 +5213,21 @@ console.log(authToken);
 
       {/* Project List Modal */}
       {showProjectListModal && (
-        <div className="modal" onClick={(e) => { 
-          // Only close if clicking directly on the modal backdrop (not on child elements)
-          if (e.target === e.currentTarget) {
+        <div className="modal bw-modal-overlay" onClick={(e) => { 
+          if (e.target.classList.contains('bw-modal-overlay') || e.target.classList.contains('modal')) {
             setShowProjectListModal(false);
           }
         }}>
-          <div className="modal-content">
-            <div className="modal-header">Project History</div>
+          <div className="modal-content bw-modal" style={{ maxWidth: '600px' }}>
+            <div className="bw-modal-header">
+              <h3 style={{ margin: 0, fontWeight: 700, fontSize: '22px', letterSpacing: '-0.5px' }}>Project History</h3>
+              <p style={{ margin: '6px 0 0 0', fontSize: '13px', color: '#666', fontWeight: 400 }}>Choose a project to resume your work</p>
+            </div>
             <div className="project-list">
               {!Array.isArray(projectList) || projectList.length === 0 ? (
-                <div style={{ textAlign: 'center', color: '#888', padding: '20px' }}>No projects yet. Create your project!</div>
+                <div style={{ textAlign: 'center', color: '#888', padding: '40px', background: '#f9f9f9', borderRadius: '12px', border: '1px dashed #e5e5e5' }}>
+                  No active projects found.
+                </div>
               ) : (
                 projectList.map(project => (
                   <div key={project.id} className={`project-list-item ${currentProject && currentProject.id === project.id ? 'active' : ''}`}>
@@ -4531,65 +5237,70 @@ console.log(authToken);
                         {project.project_type} • Created {new Date(project.created_at).toLocaleDateString()}
                       </div>
                     </div>
-                    <div className="project-list-item-actions">
+                    <div className="project-list-item-actions" onClick={(e) => e.stopPropagation()}>
                       <button
                         className="project-delete-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteProject(project.id, project.name);
-                        }}
+                        onClick={() => deleteProject(project.id, project.name)}
                         title="Delete project"
                       >
-                        🗑️
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                       </button>
                     </div>
                   </div>
                 ))
               )}
-                      </div>
-            <div className="modal-actions">
+            </div>
+            <div className="bw-modal-actions">
               {projectList.length > 0 && (
                 <button
                   type="button"
-                  className="btn"
-                  style={{ background: '#e53e3e', color: 'white' }}
+                  className="bw-btn-cancel"
+                  style={{ color: '#e53e3e', borderColor: '#fee2e2' }}
                   onClick={deleteAllProjects}
                 >
-                  🗑️ Delete All Projects
+                  Delete All Projects
                 </button>
               )}
-              <button type="button" className="btn btn-cancel" onClick={() => setShowProjectListModal(false)}>Close</button>
-                  </div>
-                </div>
+              <button type="button" className="bw-btn-cancel" onClick={() => setShowProjectListModal(false)}>Close</button>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Upload Modal */}
       {showUploadModal && (
-        <div className="modal" onClick={(e) => { 
-          // Only close if clicking directly on the modal backdrop (not on child elements)
-          if (e.target === e.currentTarget) {
+        <div className="modal bw-modal-overlay" onClick={(e) => { 
+          if (e.target.classList.contains('bw-modal-overlay') || e.target.classList.contains('modal')) {
             setShowUploadModal(false);
           }
         }}>
-          <div className="modal-content">
-            <div className="modal-header">Upload Images/Videos/PDFs</div>
-            <div className="file-upload" onClick={() => document.getElementById('fileInput').click()}>
-              <div className="file-upload-icon">📁</div>
-              <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '8px', color: '#fff' }}>Drop files or click to browse</div>
-              <div style={{ fontSize: '13px', color: '#888' }}>JPG, PNG, MP4, AVI, PDF supported</div>
-        </div>
+          <div className="modal-content bw-modal">
+            <div className="bw-modal-header">
+              <h3 style={{ margin: 0, fontWeight: 700, fontSize: '22px', letterSpacing: '-0.5px' }}>Upload Files</h3>
+              <p style={{ margin: '6px 0 0 0', fontSize: '13px', color: '#666', fontWeight: 400 }}>Select files from your computer to start annotating</p>
+            </div>
+            <div className="bw-file-upload" onClick={() => document.getElementById('fileInput').click()}>
+              <div className="bw-file-upload-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+              </div>
+              <div style={{ fontSize: '15px', fontWeight: '600', marginBottom: '8px', color: '#000' }}>Drop files or click to browse</div>
+              <div style={{ fontSize: '13px', color: '#666' }}>JPG, PNG, MP4, AVI, PDF supported</div>
+            </div>
             <input type="file" id="fileInput" multiple accept="image/*,video/*,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} />
             {showUploadProgress && (
-              <div style={{ marginTop: '20px' }}>
-                <div style={{ background: '#2a2a3e', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', height: '100%', width: `${uploadProgress}%`, transition: 'width 0.3s' }}></div>
-      </div>
-                <div style={{ textAlign: 'center', marginTop: '10px', fontSize: '13px' }}>{uploadStatus}</div>
+              <div style={{ marginTop: '24px' }}>
+                <div style={{ background: '#f0f0f0', height: '6px', borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ background: '#000000', height: '100%', width: `${uploadProgress}%`, transition: 'width 0.3s' }}></div>
+                </div>
+                <div style={{ textAlign: 'center', marginTop: '10px', fontSize: '12px', fontWeight: '600', color: '#000' }}>{uploadStatus}</div>
               </div>
             )}
-            <div className="modal-actions">
-              <button type="button" className="btn btn-cancel" onClick={() => setShowUploadModal(false)}>Close</button>
+            <div className="bw-modal-actions">
+              <button type="button" className="btn bw-btn-cancel" onClick={() => setShowUploadModal(false)}>Close</button>
             </div>
           </div>
         </div>
@@ -4597,203 +5308,107 @@ console.log(authToken);
 
       {/* Assigned Files Modal */}
       {showAssignedFilesModal && (
-        <div className="modal" onClick={(e) => { 
-          // Only close if clicking directly on the modal backdrop (not on child elements)
-          if (e.target === e.currentTarget) {
+        <div className="modal bw-modal-overlay" onClick={(e) => { 
+          if (e.target.classList.contains('bw-modal-overlay') || e.target.classList.contains('modal')) {
             setShowAssignedFilesModal(false);
           }
         }}>
-          <div className="modal-content" style={{ maxWidth: '800px', maxHeight: '80vh' }}>
-            <div className="modal-header">Assigned Files</div>
-            <div style={{ padding: '20px', maxHeight: '60vh', overflowY: 'auto' }}>
+          <div className="modal-content bw-modal" style={{ maxWidth: '800px' }}>
+            <div className="bw-modal-header">
+              <h3 style={{ margin: 0, fontWeight: 700, fontSize: '22px', letterSpacing: '-0.5px' }}>Assigned Files</h3>
+              <p style={{ margin: '6px 0 0 0', fontSize: '13px', color: '#666', fontWeight: 400 }}>Choose files assigned to you to start annotating in your current project</p>
+            </div>
+            <div style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: '10px' }}>
               {assignedFiles.length > 0 ? (
                 <>
-                  <div style={{ marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <label style={{ color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8f8f8', padding: '12px 16px', borderRadius: '8px' }}>
+                    <label style={{ color: '#000', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', fontWeight: '600' }}>
                       <input
                         type="checkbox"
                         checked={assignedFiles.length > 0 && assignedFiles.every(f => selectedAssignedFiles.has(f.id))}
                         onChange={handleSelectAllAssignedFiles}
-                        style={{ cursor: 'pointer' }}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#000' }}
                       />
-                      <span>Select All ({selectedAssignedFiles.size} selected)</span>
+                      <span>Select All Available ({selectedAssignedFiles.size} selected)</span>
                     </label>
                   </div>
-                  {/* Project Folders */}
                   {Object.keys(assignedFilesByProject).length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       {Object.entries(assignedFilesByProject).map(([projectName, files]) => {
                         const isExpanded = expandedProjectFolders.has(projectName);
                         return (
-                          <div key={projectName} style={{ border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', overflow: 'hidden' }}>
-                            {/* Folder Header */}
+                          <div key={projectName} style={{ border: '1px solid #e5e5e5', borderRadius: '10px', overflow: 'hidden', background: '#fff' }}>
                             <div
                               style={{
-                                padding: '12px 15px',
-                                background: selectedProjectFolders.has(projectName) ? '#4ECDC4' : (isExpanded ? '#3a3a5e' : '#2a2a3e'),
+                                padding: '14px 18px',
+                                background: selectedProjectFolders.has(projectName) ? '#000000' : (isExpanded ? '#f9f9f9' : '#ffffff'),
                                 cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'space-between',
-                                transition: 'background 0.2s',
-                                border: selectedProjectFolders.has(projectName) ? '2px solid #fff' : '2px solid transparent'
+                                transition: 'all 0.2s',
+                                borderBottom: isExpanded ? '1px solid #eee' : 'none'
                               }}
-                              onClick={(e) => {
-                                // Only handle folder selection if not clicking on checkbox or arrow
-                                if (e.target.type === 'checkbox' || e.target.closest('.folder-arrow')) {
-                                  return;
-                                }
-                                // Toggle folder selection (just track selection, don't add to queue)
-                                const newSelected = new Set(selectedProjectFolders);
-                                if (selectedProjectFolders.has(projectName)) {
-                                  newSelected.delete(projectName);
-                                } else {
-                                  newSelected.add(projectName);
-                                }
-                                setSelectedProjectFolders(newSelected);
-                              }}
+                              onClick={() => setExpandedProjectFolders(prev => {
+                                const newSet = new Set(prev);
+                                if (newSet.has(projectName)) newSet.delete(projectName);
+                                else newSet.add(projectName);
+                                return newSet;
+                              })}
                             >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                 <input
                                   type="checkbox"
+                                  onClick={(e) => e.stopPropagation()}
                                   checked={selectedProjectFolders.has(projectName)}
                                   onChange={(e) => {
                                     e.stopPropagation();
-                                    // Toggle folder selection (just track selection, don't add to queue)
-                                    const newSelected = new Set(selectedProjectFolders);
-                                    if (selectedProjectFolders.has(projectName)) {
-                                      newSelected.delete(projectName);
-                                    } else {
-                                      newSelected.add(projectName);
-                                    }
-                                    setSelectedProjectFolders(newSelected);
+                                    setSelectedProjectFolders(prev => {
+                                      const newSet = new Set(prev);
+                                      if (newSet.has(projectName)) newSet.delete(projectName);
+                                      else newSet.add(projectName);
+                                      return newSet;
+                                    });
                                   }}
-                                  onClick={(e) => e.stopPropagation()}
-                                  style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                  style={{ width: '16px', height: '16px', accentColor: '#000' }}
                                 />
-                                <span style={{ fontSize: '18px' }}>{isExpanded ? '📂' : '📁'}</span>
-                                <span style={{ fontWeight: '600', color: '#fff', flex: 1 }}>{projectName}</span>
-                                <span style={{ fontSize: '12px', color: '#aaa' }}>
-                                  ({files.length} {files.length === 1 ? 'file' : 'files'})
-                                </span>
+                                <span style={{ color: selectedProjectFolders.has(projectName) ? '#ffffff' : '#000000', fontWeight: '700', fontSize: '15px' }}>{projectName}</span>
+                                <span style={{ color: selectedProjectFolders.has(projectName) ? 'rgba(255,255,255,0.7)' : '#666', fontSize: '12px' }}>({files.length} documents)</span>
                               </div>
-                              <span 
-                                className="folder-arrow"
-                                style={{ fontSize: '14px', color: '#fff', cursor: 'pointer', padding: '4px 8px', marginLeft: '8px' }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const newExpanded = new Set(expandedProjectFolders);
-                                  if (isExpanded) {
-                                    newExpanded.delete(projectName);
-                                  } else {
-                                    newExpanded.add(projectName);
-                                  }
-                                  setExpandedProjectFolders(newExpanded);
-                                }}
-                              >
-                                {isExpanded ? '▼' : '▶'}
-                              </span>
+                              <span style={{ color: selectedProjectFolders.has(projectName) ? '#ffffff' : '#999', transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', display: 'inline-block' }}>▶</span>
                             </div>
                             
-                            {/* Folder Content */}
-                            {isExpanded && (
-                              <div style={{ padding: '15px', background: '#1a1a2e' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '10px' }}>
-                                  {files.map((file) => {
-                                    const isImage = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(file.file_type?.toLowerCase());
-                                    const isPdf = file.file_type?.toLowerCase() === 'pdf';
-                                    const previewUrl = isImage ? `http://localhost:8000/api/bulk-upload/files/${file.id}/preview` : null;
-                                    
-                                    return (
-                      <div
-                        key={file.id}
-                        style={{
-                          padding: '10px',
-                          background: selectedAssignedFiles.has(file.id) ? '#4ECDC4' : '#2a2a3e',
-                          borderRadius: '8px',
-                          cursor: 'pointer',
-                          border: selectedAssignedFiles.has(file.id) ? '2px solid #fff' : '2px solid transparent',
-                                          transition: 'all 0.2s',
-                                          position: 'relative',
-                                          overflow: 'hidden'
-                        }}
-                        onClick={() => handleAssignedFileSelect(file.id)}
-                      >
-                                        {isImage && previewUrl ? (
-                                          <div style={{ 
-                                            width: '100%', 
-                                            height: '120px', 
-                                            marginBottom: '8px',
-                                            borderRadius: '6px',
-                                            overflow: 'hidden',
-                                            background: '#1a1a2e',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            position: 'relative'
-                                          }}>
-                                            <img 
-                                              src={previewUrl} 
-                                              alt={file.file_name}
-                                              style={{
-                                                width: '100%',
-                                                height: '100%',
-                                                objectFit: 'cover',
-                                                display: 'block'
-                                              }}
-                                              onError={(e) => {
-                                                e.target.style.display = 'none';
-                                                const parent = e.target.parentElement;
-                                                if (parent && !parent.querySelector('.error-icon')) {
-                                                  const errorDiv = document.createElement('div');
-                                                  errorDiv.className = 'error-icon';
-                                                  errorDiv.style.cssText = 'color: #888; font-size: 48px; position: absolute;';
-                                                  errorDiv.textContent = '🖼️';
-                                                  parent.appendChild(errorDiv);
-                                                }
-                                              }}
-                                              loading="lazy"
-                                            />
-                        </div>
-                                        ) : isPdf ? (
-                                          <div style={{ 
-                                            width: '100%', 
-                                            height: '120px', 
-                                            marginBottom: '8px',
-                                            borderRadius: '6px',
-                                            background: '#1a1a2e',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            fontSize: '48px'
-                                          }}>
-                                            📄
-                                          </div>
-                                        ) : (
-                                          <div style={{ 
-                                            width: '100%', 
-                                            height: '120px', 
-                                            marginBottom: '8px',
-                                            borderRadius: '6px',
-                                            background: '#1a1a2e',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            fontSize: '48px'
-                                          }}>
-                                            📁
-                                          </div>
-                                        )}
-                                        <div style={{ fontSize: '11px', color: '#fff', textAlign: 'center', wordBreak: 'break-word', fontWeight: '500' }}>
-                          {file.file_name}
-                        </div>
-                        <div style={{ fontSize: '10px', color: '#888', textAlign: 'center', marginTop: '4px' }}>
-                                          {file.file_type?.toUpperCase() || 'FILE'}
-                        </div>
-                      </div>
-                                    );
-                                  })}
-                  </div>
+                            {isExpanded && !selectedProjectFolders.has(projectName) && (
+                              <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '10px', background: '#fafafa' }}>
+                                {files.map(file => (
+                                  <div
+                                    key={file.id}
+                                    onClick={() => handleAssignedFileSelect(file.id)}
+                                    style={{
+                                      padding: '12px 14px',
+                                      borderRadius: '8px',
+                                      background: selectedAssignedFiles.has(file.id) ? '#000000' : '#ffffff',
+                                      border: '1px solid #e5e5e5',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.2s',
+                                      boxShadow: selectedAssignedFiles.has(file.id) ? '0 4px 12px rgba(0,0,0,0.1)' : 'none'
+                                    }}
+                                  >
+                                    <div style={{ 
+                                      fontSize: '12px', 
+                                      color: selectedAssignedFiles.has(file.id) ? '#ffffff' : '#000000',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      fontWeight: '600'
+                                    }}>
+                                      {file.file_name}
+                                    </div>
+                                    <div style={{ fontSize: '10px', color: selectedAssignedFiles.has(file.id) ? 'rgba(255,255,255,0.6)' : '#999', marginTop: '2px' }}>
+                                      {file.file_type?.toUpperCase() || 'FILE'}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             )}
                           </div>
@@ -4801,122 +5416,58 @@ console.log(authToken);
                       })}
                     </div>
                   ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '10px' }}>
-                      {assignedFiles.map((file) => {
-                        const isImage = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(file.file_type?.toLowerCase());
-                        const isPdf = file.file_type?.toLowerCase() === 'pdf';
-                        const previewUrl = isImage ? `http://localhost:8000/api/bulk-upload/files/${file.id}/preview` : null;
-                        
-                        return (
-                          <div
-                            key={file.id}
-                            style={{
-                              padding: '10px',
-                              background: selectedAssignedFiles.has(file.id) ? '#4ECDC4' : '#2a2a3e',
-                              borderRadius: '8px',
-                              cursor: 'pointer',
-                              border: selectedAssignedFiles.has(file.id) ? '2px solid #fff' : '2px solid transparent',
-                              transition: 'all 0.2s',
-                              position: 'relative',
-                              overflow: 'hidden'
-                            }}
-                            onClick={() => handleAssignedFileSelect(file.id)}
-                          >
-                            {isImage && previewUrl ? (
-                              <div style={{ 
-                                width: '100%', 
-                                height: '120px', 
-                                marginBottom: '8px',
-                                borderRadius: '6px',
-                                overflow: 'hidden',
-                                background: '#1a1a2e',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                position: 'relative'
-                              }}>
-                                <img 
-                                  src={previewUrl} 
-                                  alt={file.file_name}
-                                  style={{
-                                    width: '100%',
-                                    height: '100%',
-                                    objectFit: 'cover',
-                                    display: 'block'
-                                  }}
-                                  onError={(e) => {
-                                    e.target.style.display = 'none';
-                                    const parent = e.target.parentElement;
-                                    if (parent && !parent.querySelector('.error-icon')) {
-                                      const errorDiv = document.createElement('div');
-                                      errorDiv.className = 'error-icon';
-                                      errorDiv.style.cssText = 'color: #888; font-size: 48px; position: absolute;';
-                                      errorDiv.textContent = '🖼️';
-                                      parent.appendChild(errorDiv);
-                                    }
-                                  }}
-                                  loading="lazy"
-                                />
-                              </div>
-                            ) : isPdf ? (
-                              <div style={{ 
-                                width: '100%', 
-                                height: '120px', 
-                                marginBottom: '8px',
-                                borderRadius: '6px',
-                                background: '#1a1a2e',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '48px'
-                              }}>
-                                📄
-                              </div>
-                            ) : (
-                              <div style={{ 
-                                width: '100%', 
-                                height: '120px', 
-                                marginBottom: '8px',
-                                borderRadius: '6px',
-                                background: '#1a1a2e',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '48px'
-                              }}>
-                                📁
-                              </div>
-                            )}
-                            <div style={{ fontSize: '11px', color: '#fff', textAlign: 'center', wordBreak: 'break-word', fontWeight: '500' }}>
-                              {file.file_name}
-                            </div>
-                            <div style={{ fontSize: '10px', color: '#888', textAlign: 'center', marginTop: '4px' }}>
-                              {file.file_type?.toUpperCase() || 'FILE'}
-                            </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '12px' }}>
+                      {assignedFiles.map((file) => (
+                        <div
+                          key={file.id}
+                          onClick={() => handleAssignedFileSelect(file.id)}
+                          style={{
+                            padding: '16px 12px',
+                            borderRadius: '10px',
+                            background: selectedAssignedFiles.has(file.id) ? '#000000' : '#ffffff',
+                            border: '1px solid #e5e5e5',
+                            cursor: 'pointer',
+                            textAlign: 'center',
+                            transition: 'all 0.2s ease',
+                            boxShadow: selectedAssignedFiles.has(file.id) ? '0 4px 12px rgba(0,0,0,0.1)' : 'none'
+                          }}
+                        >
+                          <div style={{ 
+                            fontSize: '13px', 
+                            color: selectedAssignedFiles.has(file.id) ? '#ffffff' : '#000000',
+                            fontWeight: '600',
+                            marginBottom: '6px',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {file.file_name}
                           </div>
-                        );
-                      })}
+                          <div style={{ fontSize: '10px', color: selectedAssignedFiles.has(file.id) ? 'rgba(255,255,255,0.7)' : '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            {file.file_type?.toUpperCase() || 'FILE'}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </>
               ) : (
-                <div style={{ textAlign: 'center', padding: '40px', color: '#888' }}>
-                  No files assigned to you yet.
+                <div style={{ textAlign: 'center', padding: '60px 40px', background: '#f9f9f9', borderRadius: '12px', border: '1px dashed #e5e5e5' }}>
+                  <div style={{ fontSize: '14px', color: '#888', fontWeight: '500' }}>No files assigned to you yet.</div>
+                  <div style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>Check back later for new documents.</div>
                 </div>
               )}
             </div>
-            <div className="modal-actions">
+            <div className="bw-modal-actions">
               <button
                 type="button"
-                className="btn btn-primary"
+                className="bw-btn-submit"
                 onClick={handleAddToProject}
                 disabled={(selectedAssignedFiles.size === 0 && selectedProjectFolders.size === 0)}
-                style={{ marginRight: '10px' }}
-                title={(selectedAssignedFiles.size === 0 && selectedProjectFolders.size === 0) ? 'Please select at least one file or folder' : selectedProjectFolders.size > 0 ? 'Load project and add files' : 'Add selected files to project'}
               >
-                {selectedProjectFolders.size > 0 ? 'Load Project & Add Files' : 'Add to Project'} ({selectedAssignedFiles.size + Array.from(selectedProjectFolders).reduce((sum, folder) => sum + (assignedFilesByProject[folder]?.length || 0), 0)})
+                {selectedProjectFolders.size > 0 ? 'Load Project & Add Files' : 'Add to Current Project'} ({selectedAssignedFiles.size + Array.from(selectedProjectFolders).reduce((sum, folder) => sum + (assignedFilesByProject[folder]?.length || 0), 0)})
               </button>
-              <button type="button" className="btn btn-cancel" onClick={() => setShowAssignedFilesModal(false)}>Close</button>
+              <button type="button" className="bw-btn-cancel" onClick={() => setShowAssignedFilesModal(false)}>Cancel</button>
             </div>
           </div>
         </div>
@@ -4924,167 +5475,158 @@ console.log(authToken);
 
       {/* Add Class Modal */}
       {showAddClassModal && (
-        <div className="modal" onClick={(e) => { if (e.target.className === 'modal') setShowAddClassModal(false); }}>
-          <div className="modal-content" style={{ maxWidth: '500px' }}>
-            <div className="modal-header">Add New Class</div>
-            <div style={{ padding: '20px' }}>
-              <div className="form-group" style={{ marginBottom: '20px' }}>
-                <label className="form-label">Enter new class name:</label>
+        <div className="modal bw-modal-overlay" onClick={(e) => { if (e.target.classList.contains('bw-modal-overlay') || e.target.classList.contains('modal')) setShowAddClassModal(false); }}>
+          <div className="modal-content bw-modal" style={{ maxWidth: '440px', padding: '32px' }}>
+            <div className="bw-modal-header" style={{ marginBottom: '24px' }}>
+              <h3 style={{ margin: 0, fontWeight: 700, fontSize: '20px', letterSpacing: '-0.5px' }}>Add New Class</h3>
+              <p style={{ margin: '6px 0 0 0', fontSize: '13px', color: '#666', fontWeight: 400 }}>Create a new label for your annotation project</p>
+            </div>
+            
+            <div className="bw-form-group" style={{ marginBottom: '20px' }}>
+              <label className="bw-label">Class Name</label>
+              <input
+                type="text"
+                className="bw-input"
+                value={newClassName}
+                onChange={(e) => setNewClassName(e.target.value)}
+                placeholder="e.g. Car, Pedestrian, Traffic Light"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if(newClassName.trim()) addClass();
+                  } else if (e.key === 'Escape') {
+                    setShowAddClassModal(false);
+                  }
+                }}
+              />
+            </div>
+
+            <div className="bw-form-group" style={{ marginBottom: '24px' }}>
+              <label className="bw-label">Class Color</label>
+              
+              {/* Color Palette Circles */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(8, 1fr)',
+                gap: '8px',
+                marginBottom: '16px'
+              }}>
+                {colorPalette.map((color, index) => (
+                  <div
+                    key={index}
+                    onClick={() => setSelectedClassColor(color)}
+                    style={{
+                      aspectRatio: '1',
+                      width: '100%',
+                      borderRadius: '50%',
+                      background: color,
+                      cursor: 'pointer',
+                      border: selectedClassColor === color ? '2px solid #000' : '2px solid transparent',
+                      boxShadow: selectedClassColor === color ? '0 0 0 2px #fff inset' : 'none',
+                      transition: 'all 0.15s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: selectedClassColor && selectedClassColor !== color ? 0.6 : 1
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
+                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                    title={color}
+                  />
+                ))}
+              </div>
+
+              {/* Color Code Input */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '6px',
+                  border: '1px solid #e5e5e5',
+                  overflow: 'hidden',
+                  flexShrink: 0
+                }}>
+                  <input
+                    type="color"
+                    value={/^#[0-9A-Fa-f]{6}$/.test(selectedClassColor) ? selectedClassColor : '#FF6B6B'}
+                    onChange={(e) => setSelectedClassColor(e.target.value)}
+                    style={{
+                      width: '150%',
+                      height: '150%',
+                      margin: '-25%',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: 0
+                    }}
+                  />
+                </div>
                 <input
                   type="text"
-                  className="form-input"
-                  value={newClassName}
-                  onChange={(e) => setNewClassName(e.target.value)}
-                  placeholder="e.g., person, car, dog"
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addClass();
-                    } else if (e.key === 'Escape') {
-                      setShowAddClassModal(false);
+                  className="bw-input"
+                  value={selectedClassColor}
+                  onChange={(e) => {
+                    const color = e.target.value;
+                    if (color === '' || /^#[0-9A-Fa-f]{0,6}$/.test(color)) setSelectedClassColor(color);
+                  }}
+                  onBlur={(e) => {
+                    const color = e.target.value;
+                    if (!/^#[0-9A-Fa-f]{6}$/.test(color)) {
+                      if (color.startsWith('#') && /^[0-9A-Fa-f]{1,5}$/.test(color.substring(1))) {
+                        setSelectedClassColor('#' + color.substring(1).padEnd(6, '0'));
+                      } else {
+                        setSelectedClassColor('#FF6B6B');
+                      }
                     }
                   }}
+                  placeholder="#FF6B6B"
+                  style={{ textTransform: 'uppercase', fontFamily: 'monospace' }}
                 />
               </div>
 
-              <div className="form-group" style={{ marginBottom: '20px' }}>
-                <label className="form-label">Choose the color:</label>
-                <div style={{ marginBottom: '15px' }}>
-                  {/* Color Palette Circles */}
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(8, 1fr)',
-                    gap: '10px',
-                    marginBottom: '15px'
-                  }}>
-                    {colorPalette.map((color, index) => (
-                      <div
-                        key={index}
-                        onClick={() => setSelectedClassColor(color)}
-                        style={{
-                          width: '40px',
-                          height: '40px',
-                          borderRadius: '50%',
-                          background: color,
-                          cursor: 'pointer',
-                          border: selectedClassColor === color ? '3px solid #fff' : '2px solid transparent',
-                          boxShadow: selectedClassColor === color ? '0 0 0 2px #667eea' : 'none',
-                          transition: 'all 0.2s',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center'
-                        }}
-                        onMouseEnter={(e) => {
-                          if (selectedClassColor !== color) {
-                            e.currentTarget.style.transform = 'scale(1.1)';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = 'scale(1)';
-                        }}
-                        title={color}
-                      >
-                        {selectedClassColor === color && (
-                          <span style={{ color: '#fff', fontSize: '18px', fontWeight: 'bold' }}>✓</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Color Code Input */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <input
-                      type="color"
-                      value={/^#[0-9A-Fa-f]{6}$/.test(selectedClassColor) ? selectedClassColor : '#FF6B6B'}
-                      onChange={(e) => setSelectedClassColor(e.target.value)}
-                      style={{
-                        width: '60px',
-                        height: '40px',
-                        border: 'none',
-                        borderRadius: '8px',
-                        cursor: 'pointer'
-                      }}
-                    />
-                    <input
-                      type="text"
-                      value={selectedClassColor}
-                      onChange={(e) => {
-                        const color = e.target.value;
-                        // Allow partial input while typing, but validate format
-                        if (color === '' || /^#[0-9A-Fa-f]{0,6}$/.test(color)) {
-                          setSelectedClassColor(color);
-                        }
-                      }}
-                      onBlur={(e) => {
-                        // Validate and fix color on blur
-                        const color = e.target.value;
-                        if (!/^#[0-9A-Fa-f]{6}$/.test(color)) {
-                          // If invalid, try to fix it or use default
-                          if (color.startsWith('#') && /^[0-9A-Fa-f]{1,5}$/.test(color.substring(1))) {
-                            // Pad with zeros if partial
-                            const hex = color.substring(1).padEnd(6, '0');
-                            setSelectedClassColor('#' + hex);
-                          } else {
-                            // Reset to a valid color
-                            setSelectedClassColor('#FF6B6B');
-                          }
-                        }
-                      }}
-                      placeholder="#FF6B6B"
-                      style={{
-                        flex: 1,
-                        padding: '10px',
-                        background: '#2a2a3e',
-                        border: '1px solid #3a3a4e',
-                        borderRadius: '8px',
-                        color: '#fff',
-                        fontSize: '14px'
-                      }}
-                    />
-                  </div>
-
-                  {/* Preview */}
-                  <div style={{
-                    marginTop: '15px',
-                    padding: '12px',
-                    background: '#2a2a3e',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px'
-                  }}>
-                    <div style={{
-                      width: '30px',
-                      height: '30px',
-                      borderRadius: '4px',
-                      background: selectedClassColor
-                    }}></div>
-                    <span style={{ color: '#888', fontSize: '14px' }}>Preview: {newClassName || 'Class name'}</span>
-                  </div>
-                </div>
+              {/* Preview */}
+              <div style={{
+                marginTop: '16px',
+                padding: '12px 16px',
+                background: '#fafafa',
+                border: '1px dashed #d4d4d4',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px'
+              }}>
+                <div style={{
+                  width: '24px',
+                  height: '24px',
+                  borderRadius: '4px',
+                  background: selectedClassColor,
+                  boxShadow: '0 0 0 1px rgba(0,0,0,0.1) inset'
+                }}></div>
+                <span style={{ color: '#000', fontSize: '13px', fontWeight: '500' }}>
+                  {newClassName || 'Class name preview'}
+                </span>
               </div>
+            </div>
 
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="btn btn-cancel"
-                  onClick={() => {
-                    setShowAddClassModal(false);
-                    setNewClassName('');
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-submit"
-                  onClick={addClass}
-                  disabled={!newClassName.trim()}
-                >
-                  OK
-                </button>
-              </div>
+            <div className="bw-modal-actions">
+              <button
+                type="button"
+                className="btn bw-btn-cancel"
+                onClick={() => {
+                  setShowAddClassModal(false);
+                  setNewClassName('');
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn bw-btn-submit"
+                onClick={addClass}
+                disabled={!newClassName.trim()}
+              >
+                Add Class
+              </button>
             </div>
           </div>
         </div>
@@ -5118,20 +5660,19 @@ console.log(authToken);
         <div className="spinner"></div>
       </div>
 
-      {/* Class Selection Panel for Pending Annotation - Draggable Panel */}
+      {/* Class Selection Panel for Pending Annotation - Premium B&W Draggable Panel */}
       {pendingAnnotation && (
         <div
           style={{
             position: 'fixed',
-            width: '280px',
-            background: 'linear-gradient(135deg, rgba(26, 26, 46, 0.95) 0%, rgba(22, 33, 62, 0.95) 100%)',
-            backdropFilter: 'blur(20px)',
-            borderRadius: '16px',
+            width: '300px',
+            background: '#ffffff',
+            borderRadius: '14px',
             display: 'flex',
             flexDirection: 'column',
             zIndex: 1000,
-            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
+            boxShadow: '0 24px 48px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.06)',
+            border: '1px solid #e5e5e5',
             maxHeight: '85vh',
             overflow: 'hidden',
             pointerEvents: 'auto',
@@ -5141,63 +5682,66 @@ console.log(authToken);
           }}
           onMouseDown={handleClassPanelMouseDown}
         >
+          {/* Panel Header */}
           <div 
             className="class-panel-header" 
             style={{
-              background: isDraggingClassPanel 
-                ? 'linear-gradient(135deg, rgba(102, 126, 234, 0.25) 0%, rgba(118, 75, 162, 0.25) 100%)'
-                : 'linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%)',
+              background: '#f8f8f8',
               padding: '14px 18px',
-              borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+              borderBottom: '1px solid #ebebeb',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
               cursor: isDraggingClassPanel ? 'grabbing' : 'grab',
               userSelect: 'none',
-              transition: 'all 0.3s ease',
-              borderRadius: '16px 16px 0 0'
+              borderRadius: '14px 14px 0 0'
             }}
           >
-            <span style={{
-              color: '#fff',
-              fontSize: '15px',
-              fontWeight: '700',
-              pointerEvents: 'none',
-              letterSpacing: '0.3px',
-              textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)'
-            }}>
-              🏷️ Select Class
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: '#000'
+              }}></div>
+              <span style={{
+                color: '#000',
+                fontSize: '14px',
+                fontWeight: '700',
+                pointerEvents: 'none',
+                letterSpacing: '-0.3px'
+              }}>
+                Select Class
+              </span>
+            </div>
             <span 
               className="class-panel-drag-handle"
               style={{
-                color: isDraggingClassPanel ? '#fff' : 'rgba(255, 255, 255, 0.6)',
-                fontSize: '20px',
+                color: '#888',
+                fontSize: '16px',
                 cursor: 'grab',
                 userSelect: 'none',
                 lineHeight: '1',
-                padding: '4px 8px',
-                transition: 'all 0.2s ease',
-                borderRadius: '6px'
+                padding: '4px 6px',
+                borderRadius: '4px',
+                transition: 'all 0.15s ease'
               }}
               title="Drag to move"
             >
-              ⋮⋮
+              ⠿
             </span>
           </div>
+
+          {/* Panel Body */}
           <div style={{
             padding: '20px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '16px',
-            overflowY: 'auto',
-            maxHeight: 'calc(85vh - 60px)',
-            scrollbarWidth: 'thin',
-            scrollbarColor: 'rgba(255, 255, 255, 0.2) transparent'
+            gap: '16px'
           }}>
             <p style={{
-              color: 'rgba(255, 255, 255, 0.7)',
-              fontSize: '13px',
+              color: '#666',
+              fontSize: '12px',
               margin: 0,
               lineHeight: '1.5'
             }}>
@@ -5206,90 +5750,107 @@ console.log(authToken);
                 : `Choose a class for your ${pendingAnnotation.type === 'bbox' ? 'bounding box' : pendingAnnotation.type === 'polygon' ? 'polygon' : 'brush'} annotation`
               }
             </p>
+
+            {/* Class list as clickable chips */}
             <div>
               <label style={{
                 display: 'block',
-                fontSize: '12px',
-                color: 'rgba(255, 255, 255, 0.7)',
+                fontSize: '10px',
+                color: '#999',
                 marginBottom: '10px',
-                fontWeight: '600',
+                fontWeight: '700',
                 textTransform: 'uppercase',
-                letterSpacing: '1.2px'
+                letterSpacing: '1px'
               }}>
-                Class:
+                Class
               </label>
-              <select
-                style={{
-                  width: '100%',
-                  padding: '12px 14px',
-                  borderRadius: '10px',
-                  background: 'rgba(15, 22, 36, 0.7)',
-                  color: 'white',
-                  border: '2px solid rgba(255, 255, 255, 0.15)',
-                  fontSize: '14px',
-                  cursor: 'pointer',
-                  outline: 'none',
-                  transition: 'all 0.3s ease',
-                  fontWeight: '500'
-                }}
-                value={pendingClassSelection}
-                onChange={(e) => setPendingClassSelection(e.target.value)}
-                autoFocus
-                onFocus={(e) => {
-                  e.target.style.borderColor = 'rgba(102, 126, 234, 0.5)';
-                  e.target.style.boxShadow = '0 0 0 3px rgba(102, 126, 234, 0.1)';
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-                  e.target.style.boxShadow = 'none';
-                }}
-              >
-                {classes.length > 0 ? (
-                  classes.map(c => <option key={c} value={c}>{c}</option>)
-                ) : (
-                  <option value="">No classes available</option>
-                )}
-              </select>
+              {classes.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {classes.map(c => (
+                    <div
+                      key={c}
+                      onClick={() => setPendingClassSelection(c)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        border: pendingClassSelection === c ? '2px solid #000' : '1px solid #e5e5e5',
+                        background: pendingClassSelection === c ? '#000' : '#fafafa',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{
+                        width: '10px',
+                        height: '10px',
+                        borderRadius: '3px',
+                        background: getClassColor(c),
+                        flexShrink: 0
+                      }}></div>
+                      <span style={{
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        color: pendingClassSelection === c ? '#fff' : '#000'
+                      }}>{c}</span>
+                      {pendingClassSelection === c && (
+                        <svg style={{ marginLeft: 'auto' }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: '#999', fontSize: '13px', textAlign: 'center', padding: '16px' }}>No classes available</div>
+              )}
             </div>
-            <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
               <button
-                className="tool-btn"
                 style={{
                   flex: 1,
-                  padding: '12px 20px',
-                  borderRadius: '10px',
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  color: 'white',
+                  padding: '11px',
+                  borderRadius: '8px',
+                  background: pendingClassSelection ? '#000' : '#e5e5e5',
+                  color: pendingClassSelection ? '#fff' : '#aaa',
                   border: 'none',
                   cursor: pendingClassSelection ? 'pointer' : 'not-allowed',
                   fontWeight: '600',
-                  fontSize: '14px',
-                  transition: 'all 0.3s ease',
-                  boxShadow: '0 4px 16px rgba(102, 126, 234, 0.4)',
-                  opacity: !pendingClassSelection ? 0.5 : 1
+                  fontSize: '13px',
+                  transition: 'all 0.15s ease'
                 }}
                 onClick={confirmPendingAnnotation}
                 disabled={!pendingClassSelection}
               >
-                ✓ Confirm
+                Confirm
               </button>
               <button
-                className="tool-btn"
                 style={{
                   flex: 1,
-                  padding: '12px 20px',
-                  borderRadius: '10px',
-                  background: 'rgba(255, 255, 255, 0.1)',
-                  color: 'white',
-                  border: '2px solid rgba(255, 255, 255, 0.2)',
+                  padding: '11px',
+                  borderRadius: '8px',
+                  background: '#ffffff',
+                  color: '#333',
+                  border: '1px solid #e0e0e0',
                   cursor: 'pointer',
                   fontWeight: '600',
-                  fontSize: '14px',
-                  transition: 'all 0.3s ease'
+                  fontSize: '13px',
+                  transition: 'all 0.15s ease'
                 }}
                 onClick={cancelPendingAnnotation}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#f5f5f5';
+                  e.currentTarget.style.borderColor = '#c0c0c0';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = '#ffffff';
+                  e.currentTarget.style.borderColor = '#e0e0e0';
+                }}
               >
-                ✕ Cancel
+                Cancel
               </button>
             </div>
           </div>
@@ -5297,6 +5858,16 @@ console.log(authToken);
       )}
 
       {showToast && <div className="toast">{toastMessage}</div>}
+      {/* Premium Loading Overlay for Smooth Project Switching */}
+      {showLoading && (
+        <div className="modal bw-modal-overlay" style={{ zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="bw-modal" style={{ textAlign: 'center', maxWidth: '320px', padding: '48px 32px' }}>
+            <div className="bw-spinner"></div>
+            <h3 className="bw-loading-text">Project Loading</h3>
+            <p className="bw-loading-subtext">Preparing your workspace...</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

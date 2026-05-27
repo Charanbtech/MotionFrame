@@ -125,6 +125,36 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const googleLogin = async (credential) => {
+    setLoading(true);
+    try {
+      const response = await fetch(getApiUrl('/api/auth/google'), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        return {
+          success: false,
+          error: data.detail || data.message || "Google Login failed. Please try again.",
+        };
+      }
+
+      persistSession(data.access_token, data.user);
+      return { success: true, user: data.user };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || "Unable to reach the server. Please try again.",
+      };
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const logout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
@@ -141,6 +171,7 @@ export function AuthProvider({ children }) {
         isAuthenticated,
         loading,
         login,
+        googleLogin,
         register,
         logout,
       }}

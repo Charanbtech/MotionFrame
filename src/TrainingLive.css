@@ -1,0 +1,347 @@
+/* ================================================================
+   TrainingLive.css — MotionFrame Live Training Dashboard
+   Dark theme matching Resources.css
+   ================================================================ */
+
+.tl-root {
+  min-height: 100vh;
+  background: #0f0f0f;
+  color: #d8d8d8;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Top Bar ────────────────────────────────────────────────────── */
+.tl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: #111111;
+  border-bottom: 1px solid #1a1a1a;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  z-index: 10;
+}
+
+.tl-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.tl-job-id {
+  font-size: 11px;
+  color: #888;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.tl-model-info {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tl-badge {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  color: #aaa;
+  font-size: 10px;
+  padding: 2px 6px;
+}
+
+.tl-header-center {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.5px;
+}
+
+.tl-header-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 20px;
+  flex: 1;
+}
+
+.tl-time-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 11px;
+  color: #888;
+}
+
+.tl-time-value {
+  color: #ddd;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.tl-stop-btn {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #f87171;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tl-stop-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fff;
+}
+
+.tl-stop-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Status Banners ─────────────────────────────────────────────── */
+.tl-banner {
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+}
+.tl-banner.done {
+  background: rgba(34, 197, 94, 0.1);
+  border-bottom: 1px solid rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+.tl-banner.error {
+  background: rgba(239, 68, 68, 0.1);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+.tl-banner.stopped {
+  background: rgba(245, 158, 11, 0.1);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+
+.tl-banner-metrics {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #ddd;
+}
+.tl-banner-metrics span strong { color: #fff; margin-left: 4px; }
+
+.tl-view-results-btn {
+  background: #ffffff;
+  color: #000000;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.tl-view-results-btn:hover { opacity: 0.9; }
+
+/* ── Main Layout ────────────────────────────────────────────────── */
+.tl-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr 280px;
+  gap: 1px;
+  background: #1d1d1d; /* Borders between columns */
+  overflow: hidden;
+}
+
+.tl-col {
+  background: #0f0f0f;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Left Column (Charts) ───────────────────────────────────────── */
+.tl-chart-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border-bottom: 1px solid #1a1a1a;
+  min-height: 0;
+}
+.tl-chart-container:last-child {
+  border-bottom: none;
+}
+
+.tl-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+
+.tl-chart-wrapper {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
+/* ── Center Column (Logs) ───────────────────────────────────────── */
+.tl-logs-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+}
+
+.tl-logs {
+  flex: 1;
+  background: #0a0a0a;
+  border: 1px solid #1a1a1a;
+  border-radius: 6px;
+  padding: 12px;
+  overflow-y: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #aaa;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── Right Column (GPU) ─────────────────────────────────────────── */
+.tl-gpu-wrapper {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.tl-gpu-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tl-gpu-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tl-gpu-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #aaa;
+}
+
+.tl-gpu-value {
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: #fff;
+}
+
+.tl-progress-bg {
+  height: 6px;
+  background: #1a1a1a;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.tl-progress-fill {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 3px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.tl-gpu-unavailable {
+  font-size: 12px;
+  color: #666;
+  font-style: italic;
+  text-align: center;
+  padding: 20px;
+}
+
+/* Colors for progress */
+.tl-color-safe { background: #22c55e; color: #22c55e; }
+.tl-color-warn { background: #fbbf24; color: #fbbf24; }
+.tl-color-danger { background: #ef4444; color: #ef4444; }
+
+/* ── Dialog ─────────────────────────────────────────────────────── */
+.tl-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.tl-dialog {
+  background: #111;
+  border: 1px solid #222;
+  border-radius: 12px;
+  padding: 24px;
+  width: 400px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.8);
+}
+
+.tl-dialog h3 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  color: #fff;
+}
+
+.tl-dialog p {
+  margin: 0 0 24px;
+  font-size: 13px;
+  color: #aaa;
+  line-height: 1.5;
+}
+
+.tl-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.tl-dialog-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.tl-dialog-btn.cancel {
+  background: transparent;
+  color: #aaa;
+  border-color: #333;
+}
+.tl-dialog-btn.cancel:hover { background: #1a1a1a; color: #fff; }
+.tl-dialog-btn.confirm {
+  background: #ef4444;
+  color: #fff;
+}
+.tl-dialog-btn.confirm:hover { background: #dc2626; }

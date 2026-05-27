@@ -154,31 +154,32 @@
     width: 0%;
 }
 
-// Resources Page Styles - Annotation Platform
+// Resources Page Styles - Annotation Platform (Z-Theme: pure black / neon white)
 .resources-page.annotation-platform {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     
     body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        background: #0f0f1e;
-        color: #e0e0e0;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #000000;
+        color: #ffffff;
         overflow: hidden;
     }
     
     .top-nav {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 15px 30px;
+        background: #111111;
+        padding: 12px 24px;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 2px 12px rgba(0,0,0,0.6);
         z-index: 100;
     }
     
     .logo {
-        font-size: 24px;
+        font-size: 22px;
         font-weight: 700;
-        color: white;
+        color: #ffffff;
         display: flex;
         align-items: center;
         gap: 10px;
@@ -186,37 +187,44 @@
     
     .nav-actions {
         display: flex;
-        gap: 12px;
+        gap: 10px;
     }
     
     .btn {
-        padding: 10px 20px;
-        border: none;
+        padding: 9px 18px;
+        border: 1px solid rgba(255,255,255,0.12);
         border-radius: 8px;
         cursor: pointer;
         font-weight: 600;
-        transition: all 0.3s;
-        font-size: 14px;
+        transition: all 0.2s;
+        font-size: 13px;
+        font-family: 'Inter', sans-serif;
     }
     
+    // Run Auto Detection button
     .btn-primary {
-        background: white;
-        color: #667eea;
+        background: #ffffff;
+        color: #000000;
+        border-color: #ffffff;
+        box-shadow: 0 0 10px rgba(255,255,255,0.25);
     }
     
     .btn-primary:hover {
         transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(255,255,255,0.3);
+        box-shadow: 0 0 16px rgba(255,255,255,0.5), 0 6px 20px rgba(255,255,255,0.2);
     }
     
+    // Export / secondary buttons
     .btn-secondary {
-        background: rgba(255,255,255,0.1);
-        color: white;
-        border: 1px solid rgba(255,255,255,0.3);
+        background: transparent;
+        color: #9ca3af;
+        border: 1px solid rgba(255,255,255,0.12);
     }
     
     .btn-secondary:hover {
-        background: rgba(255,255,255,0.2);
+        border-color: rgba(255,255,255,0.35);
+        color: #ffffff;
+        box-shadow: 0 0 8px rgba(255,255,255,0.3);
     }
     
     .main-container {
@@ -231,8 +239,8 @@
     
     .sidebar {
         width: 280px;
-        background: #1a1a2e;
-        border-right: 1px solid #6d6d6d;
+        background: #111111;
+        border-right: 1px solid rgba(255,255,255,0.08);
         overflow-y: auto;
         padding: 20px;
     }
@@ -242,12 +250,12 @@
     // }
     
     .sidebar-title {
-        font-size: 12px;
+        font-size: 10px;
         font-weight: 700;
         text-transform: uppercase;
-        color: #888;
+        color: rgba(255,255,255,0.35);
         margin-top: 15px;
-        letter-spacing: 1px;
+        letter-spacing: 1.2px;
     }
 
     .statistics-title {
@@ -261,28 +269,31 @@
     }
     
     .tool-btn {
-        background: #2a2a3e;
-        border: 2px solid transparent;
-        padding: 15px;
+        background: transparent;
+        border: 1px solid transparent;
+        padding: 14px;
         border-radius: 10px;
         cursor: pointer;
-        transition: all 0.3s;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
         display: flex;
         flex-direction: column;
         align-items: center;
         gap: 8px;
-        color: #e0e0e0;
+        color: rgba(255,255,255,0.5);
     }
     
     .tool-btn:hover {
-        background: #3a3a4e;
-        transform: translateY(-2px);
+        background: rgba(255,255,255,0.03);
+        border-color: rgba(255,255,255,0.3);
+        color: #ffffff;
     }
     
     .tool-btn.active {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-color: #667eea;
-        color: white;
+        background: #1a1a1a;
+        border-color: #ffffff;
+        color: #ffffff;
+        box-shadow: 0 0 12px rgba(255,255,255,0.6);
+        transform: scale(1.05);
     }
     
     .tool-icon {
@@ -301,24 +312,26 @@
     }
     
     .class-item {
-        background: #2a2a3e;
-        padding: 12px;
+        background: #1a1a1a;
+        padding: 11px 12px;
         border-radius: 8px;
         display: flex;
         justify-content: space-between;
         align-items: center;
         cursor: pointer;
-        transition: all 0.3s;
-        border: 2px solid transparent;
+        transition: all 0.2s;
+        border: 1px solid rgba(255,255,255,0.07);
     }
     
     .class-item:hover {
-        background: #3a3a4e;
+        background: #222222;
+        border-color: rgba(255,255,255,0.2);
     }
     
     .class-item.active {
-        border-color: #667eea;
-        background: rgba(102,126,234,0.1);
+        border-color: rgba(255,255,255,0.5);
+        background: rgba(255,255,255,0.05);
+        box-shadow: 0 0 8px rgba(255,255,255,0.15);
     }
     
     .class-color {
@@ -335,8 +348,9 @@
     }
     
     .class-count {
-        background: rgba(255,255,255,0.1);
-        padding: 4px 10px;
+        background: rgba(255,255,255,0.07);
+        color: rgba(255,255,255,0.5);
+        padding: 3px 10px;
         border-radius: 12px;
         font-size: 11px;
         font-weight: 600;
@@ -346,16 +360,16 @@
         flex: 1;
         display: flex;
         flex-direction: column;
-        background: #16162a;
+        background: #000000;
     }
     
     .canvas-toolbar {
-        background: #1a1a2e;
-        padding: 15px 20px;
+        background: #111111;
+        padding: 11px 18px;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        border-bottom: 1px solid #2a2a3e;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
     }
     
     .toolbar-left, .toolbar-right {
@@ -398,7 +412,7 @@
         flex: 1;
         position: relative;
         overflow: hidden;
-        background: #16162a;
+        background: #000000;
     }
     
     #annotationCanvas {
@@ -412,8 +426,8 @@
     
     .right-panel {
         width: 240px;
-        background: #1a1a2e;
-        border-left: 1px solid #6d6d6d;
+        background: #111111;
+        border-left: 1px solid rgba(255,255,255,0.08);
         overflow-y: auto;
         padding: 20px;
     }
@@ -425,21 +439,23 @@
     }
     
     .annotation-item {
-        background: #2a2a3e;
-        padding: 15px;
+        background: #1a1a1a;
+        padding: 14px;
         border-radius: 10px;
-        border: 2px solid transparent;
-        transition: all 0.3s;
+        border: 1px solid rgba(255,255,255,0.07);
+        transition: all 0.2s;
         cursor: pointer;
     }
     
     .annotation-item:hover {
-        background: #3a3a4e;
+        background: #222222;
+        border-color: rgba(255,255,255,0.18);
     }
     
     .annotation-item.selected {
-        border-color: #667eea;
-        background: rgba(102,126,234,0.1);
+        border-color: rgba(255,255,255,0.5);
+        background: rgba(255,255,255,0.04);
+        box-shadow: 0 0 8px rgba(255,255,255,0.15);
     }
     
     .annotation-header {
@@ -484,7 +500,7 @@
     
     .annotation-details {
         font-size: 12px;
-        color: #888;
+        color: rgba(255,255,255,0.4);
     }
     .image-gallery-container {
         max-height: calc(3 * 100px + 2 * 10px); // Height for 3 rows (shows ~6 images)
@@ -530,12 +546,14 @@
     }
     
     .image-thumb:hover {
-        transform: scale(1.05);
-        border-color: #667eea;
+        transform: scale(1.04);
+        border-color: rgba(255,255,255,0.5);
+        box-shadow: 0 0 8px rgba(255,255,255,0.3);
     }
     
     .image-thumb.active {
-        border-color: #667eea;
+        border-color: rgba(255,255,255,0.8);
+        box-shadow: 0 0 10px rgba(255,255,255,0.4);
     }
     
     .image-thumb img {
@@ -578,34 +596,32 @@
         font-size: 36px;
         font-weight: 700;
         margin-bottom: 15px;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        background-clip: text;
-        -webkit-text-fill-color: transparent;
+        color: #ffffff;
+        text-shadow: 0 0 30px rgba(255,255,255,0.3);
     }
     
     .welcome-subtitle {
         font-size: 18px;
-        color: #fff;
+        color: rgba(255,255,255,0.5);
         margin-bottom: 40px;
     }
     
     ::-webkit-scrollbar {
-        width: 10px;
-        height: 10px;
+        width: 6px;
+        height: 6px;
     }
     
     ::-webkit-scrollbar-track {
-        background: #1a1a2e;
+        background: transparent;
     }
     
     ::-webkit-scrollbar-thumb {
-        background: #3a3a4e;
+        background: rgba(255,255,255,0.15);
         border-radius: 5px;
     }
     
     ::-webkit-scrollbar-thumb:hover {
-        background: #4a4a5e;
+        background: rgba(255,255,255,0.3);
     }
 
     // Modal Styles
@@ -627,14 +643,15 @@
     }
     
     .modal-content {
-        background: #1a1a2e;
+        background: #111111;
+        border: 1px solid rgba(255,255,255,0.12);
         border-radius: 16px;
         padding: 30px;
         max-width: 600px;
         width: 90%;
         max-height: 80vh;
         overflow-y: auto;
-        box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        box-shadow: 0 24px 70px rgba(0,0,0,0.9), 0 0 8px rgba(255,255,255,0.08);
     }
     
     .modal-header {
@@ -660,17 +677,17 @@
     .form-input, .form-select, .form-textarea {
         width: 100%;
         padding: 12px;
-        border: 2px solid #2a2a3e;
+        border: 1px solid rgba(255,255,255,0.1);
         border-radius: 8px;
-        background: #2a2a3e;
-        color: #e0e0e0;
+        background: #0a0a0a;
+        color: #ffffff;
         font-size: 14px;
         transition: all 0.3s;
         
         &:focus {
             outline: none;
-            border-color: #667eea;
-            background: #3a3a4e;
+            border-color: rgba(255,255,255,0.5);
+            box-shadow: 0 0 8px rgba(255,255,255,0.2);
         }
     }
     
@@ -680,16 +697,18 @@
     }
     
     .file-upload {
-        border: 2px dashed #2a2a3e;
+        border: 2px dashed rgba(255,255,255,0.12);
         border-radius: 12px;
         padding: 40px;
         text-align: center;
         cursor: pointer;
         transition: all 0.3s;
+        background: #0a0a0a;
         
         &:hover {
-            border-color: #667eea;
-            background: rgba(102,126,234,0.05);
+            border-color: rgba(255,255,255,0.35);
+            background: rgba(255,255,255,0.03);
+            box-shadow: 0 0 12px rgba(255,255,255,0.1);
         }
     }
     
@@ -707,17 +726,25 @@
     }
     
     .btn-cancel {
-        background: #2a2a3e;
-        color: #e0e0e0;
+        background: transparent;
+        color: rgba(255,255,255,0.6);
+        border: 1px solid rgba(255,255,255,0.12);
         
         &:hover {
-            background: #3a3a4e;
+            border-color: rgba(255,255,255,0.3);
+            color: #ffffff;
         }
     }
     
     .btn-submit {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
+        background: #ffffff;
+        color: #000000;
+        border: 1px solid #ffffff;
+        box-shadow: 0 0 10px rgba(255,255,255,0.3);
+        
+        &:hover {
+            box-shadow: 0 0 16px rgba(255,255,255,0.55);
+        }
     }
     
     // Loading Spinner

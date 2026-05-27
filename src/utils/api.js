@@ -3,7 +3,7 @@
  * This ensures all API calls use the correct base URL from environment variables
  */
 
-const API_BASE_URL = import.meta?.env?.VITE_API_BASE_URL || "http://localhost:8000";
+const API_BASE_URL = import.meta?.env?.VITE_API_BASE_URL || "";
 
 /**
  * Get the full API URL for an endpoint

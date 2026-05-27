@@ -1,0 +1,196 @@
+.tr-root {
+  min-height: 100vh;
+  background: #0f0f0f;
+  color: #d8d8d8;
+  font-family: 'Inter', -apple-system, sans-serif;
+  padding: 40px;
+}
+
+.tr-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.tr-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+}
+
+.tr-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 8px 0;
+}
+
+.tr-subtitle {
+  font-size: 14px;
+  color: #888;
+}
+
+.tr-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.tr-btn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+}
+
+.tr-btn-primary {
+  background: #fff;
+  color: #000;
+}
+.tr-btn-primary:hover {
+  background: #e5e5e5;
+}
+
+.tr-btn-secondary {
+  background: rgba(255,255,255,0.05);
+  color: #fff;
+  border-color: rgba(255,255,255,0.1);
+}
+.tr-btn-secondary:hover {
+  background: rgba(255,255,255,0.1);
+}
+
+.tr-grid {
+  display: grid;
+  gap: 24px;
+}
+
+/* Metrics Section */
+.tr-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.tr-metric-card {
+  background: #151515;
+  border: 1px solid #222;
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.tr-metric-label {
+  font-size: 13px;
+  color: #888;
+  margin-bottom: 8px;
+}
+
+.tr-metric-value {
+  font-size: 32px;
+  font-weight: 700;
+  color: #fff;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Charts Section */
+.tr-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.tr-chart-card {
+  background: #151515;
+  border: 1px solid #222;
+  border-radius: 12px;
+  padding: 24px;
+  height: 350px;
+  display: flex;
+  flex-direction: column;
+}
+
+.tr-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 16px;
+}
+
+.tr-chart-wrapper {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
+/* Images Section */
+.tr-images-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 24px;
+}
+
+.tr-image-card {
+  background: #151515;
+  border: 1px solid #222;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.tr-image-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ccc;
+  margin-bottom: 12px;
+}
+
+.tr-img-wrapper {
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  aspect-ratio: 4/3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.tr-img-wrapper img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transition: transform 0.2s;
+}
+
+.tr-img-wrapper:hover img {
+  transform: scale(1.02);
+}
+
+/* Image Modal */
+.tr-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.9);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  cursor: pointer;
+}
+
+.tr-modal-img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 4px;
+  box-shadow: 0 0 40px rgba(0,0,0,0.5);
+  cursor: default;
+}

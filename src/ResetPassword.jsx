@@ -3,7 +3,8 @@ import { Container, Row, Col, Form, Button } from 'react-bootstrap';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getApiUrl } from './utils/api';
 import './style.scss';
-import robotLogos from './assets/Robot1.png';
+import robotLogos from './assets/MotionFrame.svg';
+import SplashScreen from './SplashScreen';
 
 const ResetPassword = () => {
   const [newPassword, setNewPassword] = useState('');
@@ -161,6 +162,10 @@ const ResetPassword = () => {
     );
   }
 
+  if (loading) {
+    return <SplashScreen text="Resetting..." />;
+  }
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -203,11 +208,11 @@ const ResetPassword = () => {
               <div style={{ textAlign: 'center', marginBottom: '40px' }}>
                 <img
                   src={robotLogos}
-                  alt="RoboSpectra Logo"
+                  alt="MotionFrame Logo"
                   style={{
                     width: '200px',
                     objectFit: 'contain',
-                    filter: 'drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3))'
+                    filter: 'invert(1) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3))'
                   }}
                 />
               </div>

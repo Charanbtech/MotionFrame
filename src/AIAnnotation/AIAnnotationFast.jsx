@@ -159,9 +159,23 @@ export default function AIAnnotationFast() {
   if (!results) {
     return (
       <div className="ai-annotation-fast-container">
-        <div className="upload-section">
-          <h1>🚀 Fast AI Annotation</h1>
-          <p>Batch process images and PDFs with AI-powered segmentation</p>
+        <div className="ai-fast-upload-box">
+          {/* Breadcrumbs for navigation */}
+          <div style={{ marginBottom: '24px', textAlign: 'left', cursor: 'pointer', color: '#6B7280', fontSize: '14px', fontWeight: '500' }}>
+            <span onClick={() => window.location.href = '/'} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <i className="fas fa-arrow-left"></i> Back Home
+            </span>
+          </div>
+
+          <div style={{ textAlign: 'center' }}>
+            <div className="aw-label-pill" style={{ margin: '0 auto 20px auto' }}>AI Vision Tool</div>
+            <h1 style={{ fontSize: '32px', fontWeight: '800', letterSpacing: '-1px', color: '#111827', marginBottom: '16px' }}>
+              Automated Batch Segmentation
+            </h1>
+            <p style={{ fontSize: '16px', color: '#6B7280', margin: '0 auto 40px auto', maxWidth: '480px', lineHeight: '1.6' }}>
+              Instantly generate precise masks for bulk images perfectly locally. Powered by our zero-shot AI models.
+            </p>
+          </div>
 
           <div className="file-upload-area">
             <input
@@ -176,7 +190,7 @@ export default function AIAnnotationFast() {
               className="select-files-btn"
               onClick={() => fileInputRef.current?.click()}
             >
-              📁 Select Files
+              <i className="fas fa-folder-open" style={{ marginRight: '8px' }}></i> Select Files
             </button>
             <p className="help-text">Select images (JPG, PNG, GIF) or PDFs</p>
           </div>
@@ -187,12 +201,12 @@ export default function AIAnnotationFast() {
               <div className="files-list">
                 {files.map((file, idx) => (
                   <div key={idx} className="file-item">
-                    <span>📄 {file.name}</span>
+                    <span><i className="fas fa-file-image" style={{ marginRight: '8px', color: '#9CA3AF' }}></i> {file.name}</span>
                     <button
                       className="remove-btn"
                       onClick={() => removeFile(idx)}
                     >
-                      ✕
+                      <i className="fas fa-times"></i>
                     </button>
                   </div>
                 ))}
@@ -209,7 +223,11 @@ export default function AIAnnotationFast() {
               onClick={processBatch}
               disabled={files.length === 0 || processing}
             >
-              {processing ? '⏳ Processing...' : '⚡ Run SAM'}
+              {processing ? (
+                <><i className="fas fa-circle-notch fa-spin" style={{ marginRight: '8px' }}></i> Processing...</>
+              ) : (
+                <><i className="fas fa-bolt" style={{ marginRight: '8px', color: '#FBBF24' }}></i> Run Analysis</>
+              )}
             </button>
           </div>
         </div>
@@ -221,7 +239,23 @@ export default function AIAnnotationFast() {
   return (
     <div className="ai-annotation-fast-container">
       <div className="results-section">
-        <h1>📊 Results</h1>
+        {/* Results Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '36px' }}>
+          <div>
+            <div className="aw-label-pill" style={{ marginBottom: '12px' }}>Analysis Complete</div>
+            <h1 style={{ fontSize: '28px', fontWeight: '800', letterSpacing: '-0.5px', color: '#111827', margin: 0 }}>
+              Segmentation Results
+            </h1>
+          </div>
+          <div className="action-buttons" style={{ margin: 0 }}>
+            <button className="new-batch-btn" onClick={() => { setResults(null); setFiles([]); setSelectedFileIndex(0); setSelectedMaskIndex(null); }}>
+              <i className="fas fa-redo" style={{ marginRight: '8px' }}></i> New Batch
+            </button>
+            <button className="export-btn" onClick={exportResults}>
+              <i className="fas fa-download" style={{ marginRight: '8px' }}></i> Export Results
+            </button>
+          </div>
+        </div>
 
         <div className="results-grid">
           <div className="file-list-panel">
@@ -230,9 +264,8 @@ export default function AIAnnotationFast() {
               {results.map((result, idx) => (
                 <div
                   key={idx}
-                  className={`file-result-item ${
-                    selectedFileIndex === idx ? 'active' : ''
-                  }`}
+                  className={`file-result-item ${selectedFileIndex === idx ? 'active' : ''
+                    }`}
                   onClick={() => {
                     setSelectedFileIndex(idx);
                     setSelectedMaskIndex(0);
@@ -256,7 +289,7 @@ export default function AIAnnotationFast() {
             <h3>Preview</h3>
             {results[selectedFileIndex]?.error ? (
               <div className="error-message">
-                ⚠️ Error: {results[selectedFileIndex].error}
+                <i className="fas fa-exclamation-triangle" style={{ marginRight: '8px' }}></i> Error: {results[selectedFileIndex].error}
               </div>
             ) : (
               <>
@@ -270,9 +303,8 @@ export default function AIAnnotationFast() {
                   {results[selectedFileIndex]?.masks?.map((_, idx) => (
                     <button
                       key={idx}
-                      className={`mask-btn ${
-                        selectedMaskIndex === idx ? 'active' : ''
-                      }`}
+                      className={`mask-btn ${selectedMaskIndex === idx ? 'active' : ''
+                        }`}
                       onClick={() => setSelectedMaskIndex(idx)}
                     >
                       Mask {idx + 1}
@@ -297,22 +329,6 @@ export default function AIAnnotationFast() {
           </div>
         </div>
 
-        <div className="action-buttons">
-          <button className="export-btn" onClick={exportResults}>
-            📦 Export Results
-          </button>
-          <button
-            className="new-batch-btn"
-            onClick={() => {
-              setResults(null);
-              setFiles([]);
-              setSelectedFileIndex(0);
-              setSelectedMaskIndex(null);
-            }}
-          >
-            🔄 New Batch
-          </button>
-        </div>
       </div>
     </div>
   );

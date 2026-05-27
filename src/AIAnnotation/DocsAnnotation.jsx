@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import '../../src/style.scss';
-import RoboSpectraLogo from '../assets/Robot.svg';
+import MotionFrameLogo from '../assets/MotionFrame.svg';
 
 const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSelect, onSaveAnnotations, onOpenProjectModal, onAnnotationDeleted, reloadTrigger }) => {
   const canvasRef = useRef(null);
@@ -22,13 +22,13 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
         }
         .toolbar-content input:focus,
         .toolbar-content select:focus {
-          border-color: rgba(102, 126, 234, 0.5) !important;
-          box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
-          background: rgba(15, 22, 36, 0.8) !important;
+          border-color: #555555 !important;
+          box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04) !important;
+          background: #111111 !important;
         }
         .toolbar-content input:hover,
         .toolbar-content select:hover {
-          border-color: rgba(255, 255, 255, 0.2) !important;
+          border-color: #555555 !important;
         }
         .toolbar-content select {
           appearance: none !important;
@@ -70,12 +70,15 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
   const [manualClasses, setManualClasses] = useState(new Set()); // Track manually added classes
   const [currentClass, setCurrentClass] = useState('object');
   const [newClassName, setNewClassName] = useState('');
+  const [editingClass, setEditingClass] = useState(null);
+  const [editClassName, setEditClassName] = useState('');
 
   // Drawing State
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPoint, setStartPoint] = useState(null);
   const [currentPoints, setCurrentPoints] = useState([]);
   const [selectedAnnotationIndex, setSelectedAnnotationIndex] = useState(null);
+  const [hoveredAnnotationIndex, setHoveredAnnotationIndex] = useState(null);
   const [resizeHandle, setResizeHandle] = useState(null);
   const [annotationsSaved, setAnnotationsSaved] = useState(false);
   const [contextNewClass, setContextNewClass] = useState('');
@@ -136,6 +139,10 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
       setIsDrawing(false);
       setSelectedAnnotationIndex(null);
       setContextMenu(null);
+      // Reset history for new image
+      historyRef.current = [];
+      historyIndexRef.current = -1;
+      isHistoryActionRef.current = false;
       // Reset zoom and pan when image changes - zoom and pan will be set to fit-to-canvas and center in loadImageToCanvas
       // Don't set zoom/pan here - let loadImageToCanvas calculate fit-to-canvas zoom and center position
 
@@ -157,16 +164,88 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
     }
   }, [reloadTrigger, selectedImage]);
 
-  // Delete key shortcut
+  // Lightweight Undo/Redo History Refs
+  const historyRef = useRef([]);
+  const historyIndexRef = useRef(-1);
+  const isHistoryActionRef = useRef(false);
+
+  useEffect(() => {
+    if (isDrawing || isMoving || isPanning) return;
+    if (isHistoryActionRef.current) {
+      isHistoryActionRef.current = false;
+      return;
+    }
+    
+    const currentFrame = historyRef.current[historyIndexRef.current];
+    const newFrameStr = JSON.stringify(annotations);
+    
+    if (currentFrame && JSON.stringify(currentFrame) === newFrameStr) {
+      return;
+    }
+    
+    const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+    newHistory.push(JSON.parse(newFrameStr));
+    if (newHistory.length > 50) newHistory.shift();
+    
+    historyRef.current = newHistory;
+    historyIndexRef.current = newHistory.length - 1;
+  }, [annotations, isDrawing, isMoving, isPanning]);
+
+  const handleUndo = useCallback(() => {
+    if (historyIndexRef.current > 0) {
+      isHistoryActionRef.current = true;
+      historyIndexRef.current -= 1;
+      setAnnotations(historyRef.current[historyIndexRef.current]);
+      setAnnotationsSaved(false);
+      setTimeout(redrawCanvas, 0);
+    }
+  }, [redrawCanvas]);
+
+  const handleRedo = useCallback(() => {
+    if (historyIndexRef.current < historyRef.current.length - 1) {
+      isHistoryActionRef.current = true;
+      historyIndexRef.current += 1;
+      setAnnotations(historyRef.current[historyIndexRef.current]);
+      setAnnotationsSaved(false);
+      setTimeout(redrawCanvas, 0);
+    }
+  }, [redrawCanvas]);
+
+  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // Prevent shortcuts when typing in inputs
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+
+      const key = e.key.toLowerCase();
+
+      // Tool Selection
+      if (key === 'b') setActiveTool('box');
+      if (key === 'p') setActiveTool('polygon');
+      if (key === 's') setActiveTool('select');
+
+      // Undo/Redo
+      if (e.ctrlKey || e.metaKey) {
+        if (key === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            handleRedo();
+          } else {
+            handleUndo();
+          }
+        } else if (key === 'y') {
+          e.preventDefault();
+          handleRedo();
+        }
+      }
+
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedAnnotationIndex !== null) {
         handleDeleteAnnotation();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedAnnotationIndex]);
+  }, [selectedAnnotationIndex, handleUndo, handleRedo]);
 
   // Load existing annotations from database
   const loadExistingAnnotations = async (imageData, skipIfSaving = false) => {
@@ -183,7 +262,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
         headers['Authorization'] = `Bearer ${token}`;
       }
       
-      const response = await fetch(`http://localhost:8000/api/images/${imageData.id}/annotations`, {
+      const response = await fetch(`/api/images/${imageData.id}/annotations`, {
         headers
       });
       
@@ -287,7 +366,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
       return;
     }
 
-    const imageUrl = `http://localhost:8000/uploads/${filepath}`;
+    const imageUrl = `/uploads/${filepath}`;
     console.log('📥 Loading image from URL:', imageUrl);
 
     const img = new Image();
@@ -392,7 +471,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
 
     // Draw annotations on top of image
     drawAnnotations();
-  }, [imageObj, zoom, panX, panY, annotations, selectedAnnotationIndex]);
+  }, [imageObj, zoom, panX, panY, annotations, selectedAnnotationIndex, hoveredAnnotationIndex]);
 
   // Keep redrawImage for backward compatibility (calls redrawCanvas)
   const redrawImage = useCallback(() => {
@@ -461,9 +540,10 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
     };
   };
 
-  const getResizeHandles = (rect, scale = { x: 1, y: 1 }) => {
+  const getResizeHandles = (rect, currentZoom = 1) => {
     const { x, y, width, height } = rect;
-    const size = 12 * Math.max(scale.x, scale.y);
+    // Logical hit area should scale inversely with zoom to remain physically accessible
+    const size = 12 / currentZoom;
     const half = size / 2;
     return [
       { name: 'nw', x: x - half, y: y - half, w: size, h: size, cursor: 'nw-resize' },
@@ -491,8 +571,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
 
     // Check for resize handles first if an annotation is selected
     if (selectedAnnotationIndex !== null && annotations[selectedAnnotationIndex] && annotations[selectedAnnotationIndex].type === 'bbox') {
-      const scale = getCanvasScale();
-      const handles = getResizeHandles(annotations[selectedAnnotationIndex].coordinates, scale);
+      const handles = getResizeHandles(annotations[selectedAnnotationIndex].coordinates, zoom);
       const clickedHandle = handles.find(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
       if (clickedHandle) {
         setResizeHandle(clickedHandle.name);
@@ -684,8 +763,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
       }
 
       if (selectedAnnotationIndex !== null && annotations[selectedAnnotationIndex].type === 'bbox') {
-        const scale = getCanvasScale();
-        const handles = getResizeHandles(annotations[selectedAnnotationIndex].coordinates, scale);
+        const handles = getResizeHandles(annotations[selectedAnnotationIndex].coordinates, zoom);
         const hoveredHandle = handles.find(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
         if (hoveredHandle) {
           canvas.style.cursor = hoveredHandle.cursor;
@@ -717,8 +795,14 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
           }
         }
       }
-      // Update cursor: grab when outside BBox, move when inside
-      canvas.style.cursor = hoveredIndex !== -1 ? 'move' : 'grab';
+      // Update cursor: default when outside BBox, move when inside
+      const newCursor = hoveredIndex !== -1 ? 'move' : 'default';
+      if (canvas.style.cursor !== newCursor) canvas.style.cursor = newCursor;
+      
+      if (hoveredAnnotationIndex !== hoveredIndex) {
+        setHoveredAnnotationIndex(hoveredIndex);
+        requestAnimationFrame(redrawCanvas);
+      }
       return;
     }
 
@@ -796,7 +880,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
             }
           }
         }
-        canvas.style.cursor = hoveredIndex !== -1 ? 'move' : 'grab';
+        canvas.style.cursor = hoveredIndex !== -1 ? 'move' : 'default';
       }
       return;
     }
@@ -945,16 +1029,31 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
     annotations.forEach((ann, index) => {
       const color = getAnnotationColor(ann.class);
       const isSelected = index === selectedAnnotationIndex;
+      const isHovered = index === hoveredAnnotationIndex;
 
-      // Thinner borders - reduced from 2/zoom to 1/zoom for normal, 2/zoom for selected
-      ctx.strokeStyle = isSelected ? '#000000' : color;
-      ctx.lineWidth = isSelected ? 2 / zoom : 1 / zoom;
+      // Thinner borders - reduced from 2/zoom to 1/zoom for normal, 2/zoom for selected, 1.5/zoom for hovered
+      ctx.strokeStyle = isSelected ? '#ffffff' : (isHovered ? '#ffffff' : color);
+      ctx.lineWidth = isSelected ? 3 / zoom : (isHovered ? 2 / zoom : 1.5 / zoom);
+      
+      if (isSelected || isHovered) {
+        ctx.shadowColor = isSelected ? '#ffffff' : color;
+        ctx.shadowBlur = isSelected ? 8 / zoom : 4 / zoom;
+      } else {
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+      }
+      
       ctx.fillStyle = color;
 
       if (ann.type === 'bbox') {
         const { x, y, width, height } = ann.coordinates;
         console.log(`drawAnnotations: Drawing bbox ${index}`, { x, y, width, height, class: ann.class });
+        
         ctx.strokeRect(x, y, width, height);
+        
+        // Reset shadow for text and background to avoid bleeding
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
 
         // Smaller font size - reduced from 14/zoom to 10/zoom
         const fontSize = 10 / zoom;
@@ -1028,6 +1127,9 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
           if (ann.type === 'polygon') ctx.closePath();
           ctx.stroke();
 
+          ctx.shadowColor = 'transparent';
+          ctx.shadowBlur = 0;
+
           ctx.globalAlpha = 0.2;
           ctx.fillStyle = color;
           ctx.fill();
@@ -1053,7 +1155,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
     });
 
     ctx.restore();
-  }, [annotations, selectedAnnotationIndex, zoom, panX, panY]);
+  }, [annotations, selectedAnnotationIndex, hoveredAnnotationIndex, zoom, panX, panY]);
 
   // Context menu drag handlers
   useEffect(() => {
@@ -1256,6 +1358,61 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
     }
   };
 
+  const handleDeleteClass = (className) => {
+    // Check if in use
+    const inUse = annotations.some(a => a.class === className);
+    if (inUse) {
+      alert(`Cannot delete class '${className}' because it is being used by annotations.`);
+      return;
+    }
+    const updatedManual = new Set(manualClasses);
+    updatedManual.delete(className);
+    setManualClasses(updatedManual);
+    const updatedClasses = classes.filter(c => c !== className);
+    setClasses(updatedClasses);
+    if (currentClass === className) {
+      setCurrentClass(updatedClasses.length > 0 ? updatedClasses[0] : '');
+    }
+  };
+
+  const handleSaveEditClass = (oldClassName) => {
+    const trimmedName = editClassName.trim();
+    if (!trimmedName || trimmedName === oldClassName) {
+      setEditingClass(null);
+      return;
+    }
+    
+    // Update annotations
+    const updatedAnnotations = annotations.map(a => 
+      a.class === oldClassName ? { ...a, class: trimmedName } : a
+    );
+    if (JSON.stringify(updatedAnnotations) !== JSON.stringify(annotations)) {
+      setAnnotations(updatedAnnotations);
+      setAnnotationsSaved(false);
+    }
+
+    // Update manual classes
+    const updatedManual = new Set(manualClasses);
+    if (updatedManual.has(oldClassName)) {
+      updatedManual.delete(oldClassName);
+      updatedManual.add(trimmedName);
+    } else {
+      updatedManual.add(trimmedName);
+    }
+    setManualClasses(updatedManual);
+
+    // Update classes array
+    const updatedClasses = classes.map(c => c === oldClassName ? trimmedName : c).sort();
+    setClasses(updatedClasses);
+
+    if (currentClass === oldClassName) {
+      setCurrentClass(trimmedName);
+    }
+    
+    setEditingClass(null);
+  };
+
+
   const saveEditedAnnotation = async (annotation) => {
     if (!annotation || !annotation.id) return; // Safety check
   
@@ -1267,7 +1424,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
         : { points: annotation.points };
   
     try {
-      await fetch(`http://localhost:8000/api/annotations/${annotation.id}`, {
+      await fetch(`/api/annotations/${annotation.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -1296,7 +1453,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
     // Delete from database if it has an ID
     if (annotationToDelete.id && selectedImage) {
       try {
-        const response = await fetch(`http://localhost:8000/api/annotations/${annotationToDelete.id}`, {
+        const response = await fetch(`/api/annotations/${annotationToDelete.id}`, {
           method: 'DELETE'
         });
         if (!response.ok) {
@@ -1419,7 +1576,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
       }
 
       // Always fetch the image file and send it as upload
-      const imageUrl = `http://localhost:8000/uploads/${normalizedPath}`;
+      const imageUrl = `/uploads/${normalizedPath}`;
       const response = await fetch(imageUrl);
       if (!response.ok) {
         throw new Error(`Failed to fetch image: ${response.statusText}`);
@@ -1430,7 +1587,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
       const file = new File([blob], filename, { type: blob.type || 'image/jpeg' });
       form.append('file', file, filename);
 
-      const resp = await fetch('http://localhost:8000/api/docs/predict', {
+      const resp = await fetch('/api/docs/predict', {
         method: 'POST',
         headers: { 'X-Requested-From': 'docs-annotation' },
         body: form
@@ -1586,9 +1743,9 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
           background: '#1a1a2e'
         }}>
           <div className="welcome-icon">
-            <img src={RoboSpectraLogo} alt="Product Logo" style={{ height: '100px', width: 'auto' }} />
+            <img src={MotionFrameLogo} alt="MotionFrame Logo" style={{ height: '100px', width: 'auto', filter: 'invert(1)' }} />
           </div>
-          <div className="welcome-title">Welcome to RoboSpectra</div>
+          <div className="welcome-title">Welcome to MotionFrame</div>
           <div className="welcome-subtitle">Professional Image Annotation Platform</div>
           <button 
             className="btn btn-primary" 
@@ -1604,48 +1761,184 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
         </div>
       ) : (
         <>
-          {/* Canvas Toolbar */}
-          <div className="canvas-toolbar" style={styles.canvasToolbar}>
-            <div className="toolbar-left" style={styles.toolbarLeft}>
+          <div className="canvas-toolbar" style={{
+            ...styles.canvasToolbar, 
+            background: '#0a0a0a', 
+            borderBottom: '1px solid rgba(255,255,255,0.08)', 
+            padding: '12px 24px', 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center', 
+            position: 'relative', 
+            zIndex: 10
+          }}>
+            <div className="toolbar-left" style={{ display: 'flex', alignItems: 'center', gap: '16px', background: '#111111', padding: '6px 8px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>
               <button 
-                className="btn btn-secondary" 
+                className="nav-btn" 
                 onClick={prevImage}
                 disabled={currentImageIndex === 0}
                 style={{
-                  ...styles.toolbarBtn,
-                  opacity: currentImageIndex === 0 ? 0.5 : 1,
-                  cursor: currentImageIndex === 0 ? 'not-allowed' : 'pointer'
+                  background: 'transparent',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: '#ffffff',
+                  padding: '6px 12px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  opacity: currentImageIndex === 0 ? 0.3 : 1,
+                  cursor: currentImageIndex === 0 ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontFamily: "'Inter', sans-serif"
+                }}
+                onMouseEnter={(e) => { 
+                  if (currentImageIndex !== 0) {
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.4)';
+                    e.currentTarget.style.boxShadow = '0 0 8px rgba(255,255,255,0.2)';
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                  }
+                }}
+                onMouseLeave={(e) => { 
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                  e.currentTarget.style.boxShadow = 'none';
+                  e.currentTarget.style.background = 'transparent';
                 }}
               >
                 ← Prev
               </button>
-              <span style={styles.imageCounter}>
-                {currentImageIndex + 1} / {images.length}
-              </span>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '100px' }}>
+                <span style={{ fontSize: '13px', fontWeight: '700', color: '#ffffff', letterSpacing: '1px' }}>
+                  {currentImageIndex + 1} / {images.length}
+                </span>
+                <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', marginTop: '2px', whiteSpace: 'nowrap', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {selectedImage ? (selectedImage.filename || selectedImage.file_name || selectedImage.filepath?.split('/').pop() || 'image.jpg') : '...'}
+                </span>
+              </div>
+
               <button 
-                className="btn btn-secondary" 
+                className="nav-btn" 
                 onClick={nextImage}
                 disabled={currentImageIndex >= images.length - 1}
                 style={{
-                  ...styles.toolbarBtn,
-                  opacity: currentImageIndex >= images.length - 1 ? 0.5 : 1,
-                  cursor: currentImageIndex >= images.length - 1 ? 'not-allowed' : 'pointer'
+                  background: 'transparent',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: '#ffffff',
+                  padding: '6px 12px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  opacity: currentImageIndex >= images.length - 1 ? 0.3 : 1,
+                  cursor: currentImageIndex >= images.length - 1 ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontFamily: "'Inter', sans-serif"
+                }}
+                onMouseEnter={(e) => { 
+                  if (currentImageIndex < images.length - 1) {
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.4)';
+                    e.currentTarget.style.boxShadow = '0 0 8px rgba(255,255,255,0.2)';
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                  }
+                }}
+                onMouseLeave={(e) => { 
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                  e.currentTarget.style.boxShadow = 'none';
+                  e.currentTarget.style.background = 'transparent';
                 }}
               >
                 Next →
               </button>
             </div>
-            <button
+
+            {/* Center Area: Zoom Level */}
+            <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: '8px', background: '#111111', padding: '6px 16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>
+               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+               <span style={{ fontSize: '13px', color: '#ffffff', fontWeight: '700', minWidth: '40px', textAlign: 'center', letterSpacing: '0.5px' }}>
+                 {Math.round(zoom * 100)}%
+               </span>
+            </div>
+            {/* Auto Detection Panel */}
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              background: '#111111',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: '12px',
+              padding: '8px 12px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+              minWidth: '220px',
+              gap: '6px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: '600' }}>Target Image</span>
+                <span style={{ fontSize: '11px', color: '#ffffff', fontWeight: '500', maxWidth: '120px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {selectedImage ? (selectedImage.filename || selectedImage.file_name || selectedImage.filepath?.split('/').pop() || 'image.png') : 'None'}
+                </span>
+              </div>
+              
+              <button
                 onClick={runDetection}
                 disabled={!selectedImage || loading}
                 style={{
-                  ...styles.actionBtn,
-                  background: loading ? '#ccc' : '#17a2b8',
-                  cursor: loading ? 'not-allowed' : 'pointer'
+                  background: loading ? '#1a1a1a' : '#ffffff',
+                  color: loading ? 'rgba(255,255,255,0.5)' : '#000000',
+                  border: loading ? '1px solid rgba(255,255,255,0.1)' : '1px solid #ffffff',
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  cursor: (!selectedImage || loading) ? 'not-allowed' : 'pointer',
+                  fontWeight: '700',
+                  fontSize: '11px',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'all 0.2s',
+                  boxShadow: (!selectedImage || loading) ? 'none' : '0 0 10px rgba(255,255,255,0.2)',
+                  fontFamily: "'Inter', sans-serif"
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading && selectedImage) {
+                    e.currentTarget.style.boxShadow = '0 0 16px rgba(255,255,255,0.6)';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!loading && selectedImage) {
+                    e.currentTarget.style.boxShadow = '0 0 10px rgba(255,255,255,0.2)';
+                    e.currentTarget.style.transform = 'translateY(0)';
+                  }
                 }}
               >
-                {loading ? '⏳ ...' : '▶️ Auto Detect'}
-            </button>
+                {loading ? (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">
+                      <g fill="none" fillRule="evenodd">
+                        <g transform="translate(1 1)" strokeWidth="3">
+                          <circle strokeOpacity=".3" cx="11" cy="11" r="11"/>
+                          <path d="M22 11c0-6-4.9-11-11-11">
+                            <animateTransform attributeName="transform" type="rotate" from="0 11 11" to="360 11 11" dur="1s" repeatCount="indefinite"/>
+                          </path>
+                        </g>
+                      </g>
+                    </svg>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: '1' }}>
+                      <span>Running...</span>
+                      <span style={{ fontSize: '9px', fontWeight: '400', opacity: 0.8, marginTop: '2px' }}>~2s estimated</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                    <span>RUN AUTO DETECTION</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           <div style={styles.mainLayout}>
@@ -1663,15 +1956,15 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
                 className="toolbar-header" 
                 style={{
                   ...styles.toolbarHeader,
-                  background: isDraggingToolbar ? '#2a2a3e' : '#1a1a2e',
+                  background: '#0a0a0a',
                   cursor: isDraggingToolbar ? 'grabbing' : 'grab'
                 }}
               >
-                <span style={styles.toolbarHeaderTitle}>🛠️ Tools Panel</span>
+                <span style={styles.toolbarHeaderTitle}>Tools Panel</span>
                 <span 
                   style={{
                     ...styles.toolbarDragHandle,
-                    color: isDraggingToolbar ? '#fff' : '#888'
+                    color: isDraggingToolbar ? '#ffffff' : 'rgba(255,255,255,0.35)'
                   }} 
                   className="toolbar-drag-handle"
                   title="Drag to move"
@@ -1680,45 +1973,268 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
                 </span>
               </div>
               <div style={styles.toolbarContent} className="toolbar-content">
-                <h4 style={styles.toolTitle}>Tools</h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                  {[
-                    { id: 'select', label: '👆 Select' },
-                    { id: 'box', label: '⬜ Box' },
-                    { id: 'polygon', label: '🔷 Polygon' },
-                    { id: 'brush', label: '🖌️ Brush' }
-                  ].map(tool => (
-                    <button
-                      key={tool.id}
-                      className={`tool-btn ${activeTool === tool.id ? 'active' : ''}`}
-                      onClick={() => setActiveTool(tool.id)}
-                    >
-                      {tool.label}
-                    </button>
-                  ))}
+                <h4 style={styles.toolTitle}>TOOLS</h4>
+                <div className="tool-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div className={`tool-btn ${activeTool === 'select' ? 'active' : ''}`} onClick={() => setActiveTool('select')}>
+                    <div className="tool-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3l14 9-7 1-4 7z"/></svg></div>
+                    <div className="tool-name">Select (S)</div>
+                  </div>
+                  <div className={`tool-btn ${activeTool === 'box' ? 'active' : ''}`} onClick={() => setActiveTool('box')}>
+                    <div className="tool-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9" strokeDasharray="2 2"/><line x1="9" y1="3" x2="9" y2="21" strokeDasharray="2 2"/></svg></div>
+                    <div className="tool-name">Box (B)</div>
+                  </div>
+                  <div className={`tool-btn ${activeTool === 'polygon' ? 'active' : ''}`} onClick={() => setActiveTool('polygon')}>
+                    <div className="tool-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/><circle cx="12" cy="2" r="1.5" fill="currentColor"/><circle cx="22" cy="8.5" r="1.5" fill="currentColor"/><circle cx="22" cy="15.5" r="1.5" fill="currentColor"/><circle cx="12" cy="22" r="1.5" fill="currentColor"/><circle cx="2" cy="15.5" r="1.5" fill="currentColor"/><circle cx="2" cy="8.5" r="1.5" fill="currentColor"/></svg></div>
+                    <div className="tool-name">Polygon (P)</div>
+                  </div>
+                  <div className={`tool-btn ${activeTool === 'brush' ? 'active' : ''}`} onClick={() => setActiveTool('brush')}>
+                    <div className="tool-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1 1 2.48 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg></div>
+                    <div className="tool-name">Brush</div>
+                  </div>
                 </div>
 
               <hr style={styles.divider} />
 
-              <h4 style={styles.toolTitle}>Classes</h4>
-              <select
-                style={styles.select}
-                value={currentClass}
-                onChange={(e) => setCurrentClass(e.target.value)}
-              >
-                {classes.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <div style={styles.addClassRow}>
+              <h4 style={styles.toolTitle}>CLASSES</h4>
+              
+              <div className="class-list toolbar-content" style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
+                {classes.map(c => {
+                  const count = annotations.filter(a => a.class === c).length;
+                  const isActive = currentClass === c;
+                  const isEditing = editingClass === c;
+                  
+                  // Deterministic color logic
+                  let hash = 0;
+                  for (let i = 0; i < c.length; i++) hash = c.charCodeAt(i) + ((hash << 5) - hash);
+                  const color = `hsl(${Math.abs(hash) % 360}, 75%, 65%)`;
+
+                  return (
+                    <div 
+                      key={c}
+                      className={`class-item ${isActive ? 'active' : ''}`}
+                      onClick={() => { if (!isEditing) setCurrentClass(c); }}
+                      style={{
+                        background: isActive ? '#1a1a1a' : 'transparent',
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        border: `1px solid ${isActive ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.08)'}`,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        boxShadow: isActive ? '0 0 10px rgba(255,255,255,0.4)' : 'none'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.3)';
+                        const actions = e.currentTarget.querySelector('.class-actions');
+                        if (actions) actions.style.opacity = '1';
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                        const actions = e.currentTarget.querySelector('.class-actions');
+                        if (actions) actions.style.opacity = '0';
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', flex: 1, overflow: 'hidden' }}>
+                        <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: color, marginRight: '10px', flexShrink: 0, boxShadow: `0 0 6px ${color}` }}></div>
+                        
+                        {isEditing ? (
+                          <input
+                            autoFocus
+                            value={editClassName}
+                            onChange={(e) => setEditClassName(e.target.value)}
+                            onBlur={() => handleSaveEditClass(c)}
+                            onKeyPress={(e) => {
+                              if (e.key === 'Enter') handleSaveEditClass(c);
+                              if (e.key === 'Escape') setEditingClass(null);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              background: '#0a0a0a',
+                              border: '1px solid rgba(255,255,255,0.3)',
+                              color: '#fff',
+                              fontSize: '12px',
+                              width: '100%',
+                              outline: 'none',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontFamily: "'Inter', sans-serif"
+                            }}
+                          />
+                        ) : (
+                          <div style={{ fontSize: '12px', color: isActive ? '#ffffff' : 'rgba(255,255,255,0.7)', fontWeight: isActive ? '600' : '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {c}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {!isEditing && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                          <div className="class-actions" style={{ display: 'flex', gap: '4px', opacity: 0, transition: 'opacity 0.2s' }}>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setEditingClass(c); setEditClassName(c); }}
+                              style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', padding: '2px', fontSize: '10px' }}
+                              title="Edit Class"
+                              onMouseEnter={(e) => e.target.style.color = '#fff'}
+                              onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.6)'}
+                            >
+                              ✎
+                            </button>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleDeleteClass(c); }}
+                              style={{ background: 'transparent', border: 'none', color: 'rgba(255,68,68,0.7)', cursor: 'pointer', padding: '2px', fontSize: '11px' }}
+                              title="Delete Class"
+                              onMouseEnter={(e) => e.target.style.color = '#ff4444'}
+                              onMouseLeave={(e) => e.target.style.color = 'rgba(255,68,68,0.7)'}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          
+                          <span style={{ 
+                            background: isActive ? '#ffffff' : 'rgba(255,255,255,0.1)', 
+                            color: isActive ? '#000000' : 'rgba(255,255,255,0.7)', 
+                            padding: '2px 8px', 
+                            borderRadius: '12px', 
+                            fontSize: '10px', 
+                            fontWeight: '700' 
+                          }}>
+                            {count}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <input
-                  style={styles.input}
-                  placeholder="New Class"
+                  style={{...styles.input, border: '1px solid rgba(255,255,255,0.1)', padding: '10px 12px'}}
+                  placeholder="New Class Name"
                   value={newClassName}
                   onChange={(e) => setNewClassName(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleAddClass()}
                 />
-                <button style={styles.addBtn} className="add-btn" onClick={handleAddClass}>+</button>
+                <button 
+                  onClick={handleAddClass}
+                  style={{
+                    background: 'transparent', 
+                    border: '1px dashed rgba(255,255,255,0.3)', 
+                    color: '#ffffff',
+                    padding: '10px',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    transition: 'all 0.2s ease',
+                    width: '100%',
+                    fontFamily: "'Inter', sans-serif"
+                  }} 
+                  onMouseEnter={(e) => { 
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.8)'; 
+                    e.currentTarget.style.boxShadow = '0 0 10px rgba(255,255,255,0.2)'; 
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                  }}
+                  onMouseLeave={(e) => { 
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.3)'; 
+                    e.currentTarget.style.boxShadow = 'none'; 
+                    e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  + Add Class
+                </button>
               </div>
 
+              <hr style={styles.divider} />
+              
+              <h4 style={styles.toolTitle}>ANNOTATIONS</h4>
+              <div className="annotations-list toolbar-content" style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', paddingRight: '4px', marginBottom: '16px' }}>
+                {annotations.length === 0 ? (
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', textAlign: 'center', padding: '10px 0', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: '8px' }}>No annotations yet</div>
+                ) : annotations.map((ann, idx) => {
+                  const isActive = selectedAnnotationIndex === idx;
+                  const c = ann.class || 'unknown';
+                  
+                  let hash = 0;
+                  for (let i = 0; i < c.length; i++) hash = c.charCodeAt(i) + ((hash << 5) - hash);
+                  const color = `hsl(${Math.abs(hash) % 360}, 75%, 65%)`;
+
+                  return (
+                    <div
+                      key={ann.id || idx}
+                      onClick={() => setSelectedAnnotationIndex(idx)}
+                      style={{
+                        background: isActive ? '#1a1a1a' : 'transparent',
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        border: `1px solid ${isActive ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.08)'}`,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        boxShadow: isActive ? '0 0 10px rgba(255,255,255,0.3)' : 'none'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.3)';
+                        const delBtn = e.currentTarget.querySelector('.ann-del-btn');
+                        if (delBtn) delBtn.style.opacity = '1';
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                        const delBtn = e.currentTarget.querySelector('.ann-del-btn');
+                        if (delBtn) delBtn.style.opacity = '0';
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: color, flexShrink: 0, boxShadow: `0 0 6px ${color}` }}></div>
+                        <div style={{ fontSize: '12px', color: isActive ? '#fff' : 'rgba(255,255,255,0.7)', fontWeight: isActive ? '600' : '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          Object {idx + 1} <span style={{ color: 'rgba(255,255,255,0.4)', fontWeight: '400' }}>({c})</span>
+                        </div>
+                      </div>
+                      <button 
+                        className="ann-del-btn"
+                        onClick={async (e) => { 
+                          e.stopPropagation(); 
+                          const annotationToDelete = annotations[idx];
+                          if (annotationToDelete.id && selectedImage) {
+                            try {
+                              const response = await fetch(`/api/annotations/${annotationToDelete.id}`, { method: 'DELETE' });
+                              if (response.ok) {
+                                setAnnotations(prev => prev.filter((_, i) => i !== idx));
+                                if (selectedAnnotationIndex === idx) setSelectedAnnotationIndex(null);
+                                setAnnotationsSaved(true);
+                                if (onAnnotationDeleted) onAnnotationDeleted();
+                              }
+                            } catch (err) {}
+                          } else {
+                            setAnnotations(prev => prev.filter((_, i) => i !== idx));
+                            if (selectedAnnotationIndex === idx) setSelectedAnnotationIndex(null);
+                            setAnnotationsSaved(true);
+                          }
+                        }}
+                        style={{ 
+                          background: 'transparent', 
+                          border: 'none', 
+                          color: 'rgba(255,68,68,0.7)', 
+                          cursor: 'pointer', 
+                          padding: '2px', 
+                          fontSize: '12px',
+                          opacity: 0,
+                          transition: 'opacity 0.2s'
+                        }}
+                        title="Delete Annotation"
+                        onMouseEnter={(e) => e.target.style.color = '#ff4444'}
+                        onMouseLeave={(e) => e.target.style.color = 'rgba(255,68,68,0.7)'}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
               {selectedAnnotationIndex !== null && (
                 <div style={styles.selectedInfo}>
                   <h4 style={styles.toolTitle}>Selected Item</h4>
@@ -1815,16 +2331,42 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
             >
               {selectedImage ? (
                 <div style={styles.canvasWrapper} ref={canvasWrapperRef}>
+                  {/* Active Tool Label */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '20px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    background: 'rgba(0, 0, 0, 0.75)',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    color: '#ffffff',
+                    padding: '8px 16px',
+                    borderRadius: '24px',
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    letterSpacing: '1px',
+                    textTransform: 'uppercase',
+                    zIndex: 10,
+                    pointerEvents: 'none',
+                    backdropFilter: 'blur(8px)',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.6)'
+                  }}>
+                    Tool: {activeTool}
+                  </div>
+
                   <canvas
                     className="img-canvas docs-annotation-canvas"
                     ref={canvasRef}
                     style={{
                       display: 'block',
-                      cursor: activeTool === 'select' ? 'grab' : 'crosshair',
+                      cursor: activeTool === 'select' ? 'default' : 
+                              activeTool === 'box' ? 'crosshair' : 
+                              activeTool === 'polygon' ? 'pointer' : 
+                              activeTool === 'brush' ? `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='none' stroke='white' stroke-width='2'/></svg>") 8 8, auto` : 'default',
                       pointerEvents: 'auto',
                       width: '100%',
                       height: '100%',
-                      background: '#1a1a2e'
+                      background: '#000000'
                     }}
                     onPointerDown={handlePointerDown}
                     onPointerMove={handlePointerMove}
@@ -1944,7 +2486,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
                     onClick={() => onImageSelect && onImageSelect(index)}
                   >
                     <img
-                      src={`http://localhost:8000/uploads/${normalizeFilePath(img.filepath)}`}
+                      src={`/uploads/${normalizeFilePath(img.filepath)}`}
                       alt={img.filename}
                       style={styles.thumbImg}
                       onError={(e) => {
@@ -1963,27 +2505,27 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
   );
 };
 
-// Styling
+// Styling — Z-Theme (pure black / neon white)
 const styles = {
   container: {
     padding: "0",
     height: "100%",
     display: "flex",
     flexDirection: "column",
-    fontFamily: "Arial, sans-serif",
-    background: "#1a1a2e",
-    color: "#e0e0e0",
+    fontFamily: "'Inter', Arial, sans-serif",
+    background: "#000000",
+    color: "#ffffff",
     width: "100%",
     overflow: "hidden",
     position: "relative"
   },
   canvasToolbar: {
-    background: "#1a1a2e",
-    padding: "15px 20px",
+    background: "#111111",
+    padding: "12px 20px",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    borderBottom: "1px solid #2a2a3e",
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
     flexShrink: 0
   },
   toolbarLeft: {
@@ -1992,19 +2534,20 @@ const styles = {
     alignItems: "center"
   },
   toolbarBtn: {
-    padding: "8px 16px",
-    background: "#2a2a3e",
-    color: "#e0e0e0",
-    border: "1px solid #ffffff4d",
+    padding: "7px 14px",
+    background: "transparent",
+    color: "#9ca3af",
+    border: "1px solid rgba(255,255,255,0.12)",
     borderRadius: "6px",
     cursor: "pointer",
-    fontSize: "14px",
+    fontSize: "13px",
     fontWeight: "500",
-    transition: "all 0.2s"
+    transition: "all 0.2s",
+    fontFamily: "'Inter', sans-serif"
   },
   imageCounter: {
-    color: "#e0e0e0",
-    fontSize: "14px",
+    color: "#9ca3af",
+    fontSize: "13px",
     fontWeight: "600",
     padding: "0 10px"
   },
@@ -2020,37 +2563,33 @@ const styles = {
   toolbarPopup: {
     position: 'fixed',
     width: '280px',
-    background: 'linear-gradient(135deg, rgba(26, 26, 46, 0.95) 0%, rgba(22, 33, 62, 0.95) 100%)',
-    backdropFilter: 'blur(20px)',
-    borderRadius: '16px',
+    background: '#111111',
+    borderRadius: '12px',
     display: 'flex',
     flexDirection: 'column',
     zIndex: 1000,
-    boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05)',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
+    boxShadow: '0 24px 60px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.08)',
+    border: '1px solid rgba(255,255,255,0.1)',
     maxHeight: '85vh',
     overflow: 'hidden',
     pointerEvents: 'auto',
   },
   toolbarHeader: {
-    background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%)',
+    background: '#0a0a0a',
     padding: '14px 18px',
-    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     cursor: 'grab',
     userSelect: 'none',
-    transition: 'all 0.3s ease',
-    borderRadius: '16px 16px 0 0'
   },
   toolbarHeaderTitle: {
-    color: '#fff',
-    fontSize: '15px',
+    color: '#ffffff',
+    fontSize: '13px',
     fontWeight: '700',
     pointerEvents: 'none',
-    letterSpacing: '0.3px',
-    textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)'
+    letterSpacing: '-0.2px',
   },
   toolbarDragHandle: {
     color: 'rgba(255, 255, 255, 0.6)',
@@ -2084,40 +2623,38 @@ const styles = {
   },
   toolTitle: {
     margin: '0 0 12px 0',
-    color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: '12px',
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: '9px',
     textTransform: 'uppercase',
-    letterSpacing: '1.2px',
-    fontWeight: '600'
+    letterSpacing: '1.4px',
+    fontWeight: '700'
   },
   toolBtn: {
     padding: '10px',
     border: 'none',
     borderRadius: '4px',
-    color: 'white',
+    color: '#e0e0e0',
     cursor: 'pointer',
     textAlign: 'left',
     fontSize: '14px',
     transition: 'all 0.2s'
   },
   select: {
-    padding: '10px 35px 10px 12px', // Add right padding for arrow
-    borderRadius: '10px',
-    background: 'rgba(15, 22, 36, 0.6)',
-    color: 'white',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
-    fontSize: '14px',
+    padding: '10px 35px 10px 12px',
+    borderRadius: '6px',
+    background: '#0a0a0a',
+    color: '#ffffff',
+    border: '1px solid rgba(255,255,255,0.12)',
+    fontSize: '13px',
     transition: 'all 0.3s ease',
     cursor: 'pointer',
     outline: 'none',
     width: '100%',
     appearance: 'none',
-    WebkitAppearance: 'none',
-    MozAppearance: 'none',
-    backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'white\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e"), rgba(15, 22, 36, 0.6)',
+    backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'white\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")',
     backgroundRepeat: 'no-repeat',
     backgroundPosition: 'right 8px center',
-    backgroundSize: '16px 16px, 100% 100%'
+    backgroundSize: '16px 16px'
   },
   addClassRow: {
     position: 'relative',
@@ -2128,64 +2665,70 @@ const styles = {
   input: {
     flex: 1,
     padding: '10px 12px',
-    borderRadius: '10px',
-    background: 'rgba(15, 22, 36, 0.6)',
-    color: 'white',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
-    fontSize: '14px',
+    borderRadius: '6px',
+    background: '#0a0a0a',
+    color: '#ffffff',
+    border: '1px solid rgba(255,255,255,0.12)',
+    fontSize: '13px',
     transition: 'all 0.3s ease',
-    outline: 'none'
+    outline: 'none',
+    fontFamily: "'Inter', sans-serif"
   },
   addBtn: {
     position: 'absolute',
     right: '4px',
     top: '50%',
     transform: 'translateY(-50%)',
-    padding: '8px 14px',
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
+    padding: '6px 12px',
+    background: '#ffffff',
+    color: '#000000',
+    border: '1px solid rgba(255,255,255,0.9)',
+    borderRadius: '4px',
     cursor: 'pointer',
-    fontSize: '16px',
-    fontWeight: '600',
-    transition: 'all 0.3s ease',
-    boxShadow: '0 4px 12px rgba(102, 126, 234, 0.4)'
+    fontSize: '14px',
+    fontWeight: '700',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 0 6px rgba(255,255,255,0.5)'
   },
   divider: {
     border: 'none',
-    borderTop: '1px solid rgba(255, 255, 255, 0.1)',
-    margin: '8px 0',
+    borderTop: '1px solid rgba(255,255,255,0.07)',
+    margin: '12px 0',
     height: '1px',
-    background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent)'
+    background: 'none'
   },
   actionBtn: {
-    padding: '10px 16px',
-    border: 'none',
-    borderRadius: '10px',
-    color: 'white',
+    padding: '9px 16px',
+    border: '1px solid rgba(255,255,255,0.15)',
+    borderRadius: '8px',
+    background: '#ffffff',
+    color: '#000000',
     cursor: 'pointer',
-    fontWeight: '600',
-    fontSize: '13px',
-    transition: 'all 0.3s ease',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+    fontWeight: '700',
+    fontSize: '12px',
+    transition: 'all 0.2s',
+    boxShadow: '0 0 8px rgba(255,255,255,0.3)',
+    fontFamily: "'Inter', sans-serif"
   },
   info: {
     marginTop: '10px',
     padding: '10px',
-    background: '#0f1624',
-    borderRadius: '4px'
+    background: '#0a0a0a',
+    borderRadius: '6px',
+    border: '1px solid rgba(255,255,255,0.08)'
   },
   infoText: {
     margin: '5px 0',
-    fontSize: '12px',
-    color: '#aaa'
+    fontSize: '11px',
+    color: '#888'
   },
   canvasContainer: {
     flex: 1,
     width: '100%',
     height: '100%',
-    background: 'linear-gradient(135deg, #0a0e1a 0%, #0f1624 100%)',
+    background: '#040404',
+    backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)',
+    backgroundSize: '20px 20px',
     borderRadius: '0',
     display: 'flex',
     justifyContent: 'center',
@@ -2193,7 +2736,7 @@ const styles = {
     overflow: 'auto',
     position: 'relative',
     cursor: 'default',
-    padding: '20px',
+    padding: '40px',
     margin: 0,
     minWidth: 0,
     minHeight: 0
@@ -2213,9 +2756,10 @@ const styles = {
   },
   rightPanel: {
     width: '150px',
-    background: '#16213e',
+    background: '#111111',
+    borderLeft: '1px solid rgba(255,255,255,0.08)',
     padding: '15px',
-    borderRadius: '8px',
+    borderRadius: '0',
     display: 'flex',
     flexDirection: 'column'
   },
@@ -2261,19 +2805,17 @@ const styles = {
     fontSize: "12px"
   },
   emptyState: {
-    padding: "40px",
-    textAlign: "center",
-    color: "#888",
-    fontSize: "16px"
+    padding: '40px',
+    textAlign: 'center',
+    color: '#888',
+    fontSize: '16px'
   },
   selectedInfo: {
     marginTop: '15px',
     padding: '16px',
-    background: 'linear-gradient(135deg, rgba(78, 205, 196, 0.1) 0%, rgba(102, 126, 234, 0.1) 100%)',
-    borderRadius: '12px',
-    border: '1px solid rgba(78, 205, 196, 0.3)',
-    boxShadow: '0 4px 16px rgba(78, 205, 196, 0.2)',
-    backdropFilter: 'blur(10px)'
+    background: '#0a0a0a',
+    borderRadius: '8px',
+    border: '1px solid rgba(255,255,255,0.09)',
   },
   selectedControl: {
     marginBottom: '14px'
@@ -2294,82 +2836,90 @@ const styles = {
   },
   contextMenu: {
     position: 'fixed',
-    background: 'rgba(22, 33, 62, 0.95)',
-    border: '1px solid #4ECDC4',
-    borderRadius: '8px',
-    padding: '12px',
+    background: 'rgba(17, 17, 17, 0.97)',
+    border: '1px solid rgba(255,255,255,0.15)',
+    borderRadius: '12px',
+    padding: '14px',
     zIndex: 9999,
     display: 'flex',
     flexDirection: 'column',
     gap: '8px',
-    boxShadow: '0 8px 16px rgba(0,0,0,0.5)',
-    minWidth: '150px',
-    backdropFilter: 'blur(5px)'
+    boxShadow: '0 12px 40px rgba(0,0,0,0.8), 0 0 8px rgba(255,255,255,0.1)',
+    minWidth: '160px',
+    backdropFilter: 'blur(12px)'
   },
   contextHeader: {
-    fontSize: '12px',
-    color: '#888',
+    fontSize: '10px',
+    color: 'rgba(255,255,255,0.4)',
     marginBottom: '4px',
     textTransform: 'uppercase',
-    letterSpacing: '1px'
+    letterSpacing: '1.2px',
+    fontWeight: '700'
   },
   contextBtn: {
-    padding: '8px',
+    padding: '8px 10px',
     background: 'transparent',
-    border: '1px solid #333',
-    borderRadius: '4px',
-    color: '#fff',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '6px',
+    color: '#ffffff',
     cursor: 'pointer',
     textAlign: 'left',
     fontSize: '13px',
     transition: 'all 0.2s'
   },
   contextSelect: {
-    padding: '6px',
-    borderRadius: '4px',
-    background: '#0f1624',
-    color: 'white',
-    border: '1px solid #333',
-    fontSize: '13px'
+    padding: '8px 10px',
+    borderRadius: '6px',
+    background: '#0a0a0a',
+    color: '#ffffff',
+    border: '1px solid rgba(255,255,255,0.12)',
+    fontSize: '13px',
+    outline: 'none',
+    width: '100%'
   },
   contextInput: {
     flex: 1,
-    padding: '6px',
-    borderRadius: '4px',
-    background: '#0f1624',
-    color: 'white',
-    border: '1px solid #333',
+    padding: '7px 10px',
+    borderRadius: '6px',
+    background: '#0a0a0a',
+    color: '#ffffff',
+    border: '1px solid rgba(255,255,255,0.12)',
     fontSize: '12px',
-    minWidth: '0'
+    minWidth: '0',
+    outline: 'none'
   },
   contextAddBtn: {
     padding: '6px 10px',
-    background: '#007bff',
-    color: 'white',
+    background: '#ffffff',
+    color: '#000000',
     border: 'none',
-    borderRadius: '4px',
+    borderRadius: '5px',
     cursor: 'pointer',
     fontSize: '14px',
-    lineHeight: '1'
+    lineHeight: '1',
+    fontWeight: '700',
+    boxShadow: '0 0 5px rgba(255,255,255,0.4)'
   },
   contextDivider: {
     height: '1px',
-    background: '#333',
+    background: 'rgba(255,255,255,0.08)',
     margin: '4px 0'
   },
   contextLabel: {
-    fontSize: '12px',
-    color: '#aaa'
+    fontSize: '11px',
+    color: 'rgba(255,255,255,0.45)',
+    fontWeight: '600'
   },
   closeBtn: {
     position: 'absolute',
-    top: '5px',
-    right: '5px',
+    top: '8px',
+    right: '8px',
     background: 'transparent',
     border: 'none',
-    color: '#888',
+    color: 'rgba(255,255,255,0.4)',
     cursor: 'pointer',
-    fontSize: '12px'
+    fontSize: '13px',
+    transition: 'color 0.15s'
   }
 };
 

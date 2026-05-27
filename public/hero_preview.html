@@ -1,0 +1,737 @@
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:transparent; overflow:hidden;}
+.root{background:#070707;border-radius:14px;overflow:hidden;width:80%;font-family:'JetBrains Mono',monospace;border:1px solid #1a1a1a;transform: scale(1.25);transform-origin: top left;}
+
+/* TOP BAR */
+.topbar{background:#040404;border-bottom:1px solid #161616;padding:9px 18px;display:flex;align-items:center;justify-content:space-between;}
+.win-dots{display:flex;gap:5px;}
+.wd{width:8px;height:8px;border-radius:50%;background:#1e1e1e;}
+.stage-tabs{display:flex;gap:1px;background:#0e0e0e;border:1px solid #1a1a1a;border-radius:6px;padding:2px;}
+.stab{font-size:9px;padding:4px 11px;color:#333;border-radius:4px;cursor:pointer;letter-spacing:1px;transition:all 0.3s;}
+.stab.on{color:#fff;background:#1c1c1c;box-shadow:0 0 10px rgba(255,255,255,0.08);}
+.live-badge{display:flex;align-items:center;gap:5px;font-size:9px;color:#444;letter-spacing:1.5px;}
+.live-dot{width:5px;height:5px;border-radius:50%;background:#fff;box-shadow:0 0 8px #fff,0 0 16px rgba(255,255,255,0.3);}
+
+/* MAIN LAYOUT */
+.main{display:flex;height:440px;}
+
+/* LEFT PANEL - canvas */
+.left-panel{flex:1;position:relative;overflow:hidden;background:#080808;border-right:1px solid #131313;}
+canvas{position:absolute;top:0;left:0;}
+.grid-bg{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,0.015) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.015) 1px,transparent 1px);background-size:30px 30px;pointer-events:none;}
+.scanline{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.07),transparent);pointer-events:none;animation:scan 5s linear infinite;}
+@keyframes scan{0%{top:-2px;}100%{top:100%;}}
+.vignette{position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 40%,rgba(0,0,0,0.6) 100%);pointer-events:none;}
+.canvas-hud-tl{position:absolute;top:10px;left:10px;display:flex;flex-direction:column;gap:3px;pointer-events:none;}
+.canvas-hud-tr{position:absolute;top:10px;right:10px;text-align:right;pointer-events:none;}
+.hud-line{font-size:8px;color:rgba(255,255,255,0.2);letter-spacing:1.5px;}
+.hud-line.bright{color:rgba(255,255,255,0.5);}
+.tool-cursor{position:absolute;width:20px;height:20px;pointer-events:none;z-index:10;}
+.tool-cursor::before,.tool-cursor::after{content:'';position:absolute;background:rgba(255,255,255,0.8);box-shadow:0 0 6px rgba(255,255,255,0.4);}
+.tool-cursor::before{width:1px;height:100%;left:50%;transform:translateX(-50%);}
+.tool-cursor::after{width:100%;height:1px;top:50%;transform:translateY(-50%);}
+.draw-rect{position:absolute;border:1px solid rgba(255,255,255,0.8);box-shadow:0 0 8px rgba(255,255,255,0.12);background:rgba(255,255,255,0.02);pointer-events:none;display:none;}
+.draw-rect .cr{position:absolute;width:5px;height:5px;}
+.draw-rect .cr.tl{top:-1px;left:-1px;border-top:1.5px solid #fff;border-left:1.5px solid #fff;}
+.draw-rect .cr.tr{top:-1px;right:-1px;border-top:1.5px solid #fff;border-right:1.5px solid #fff;}
+.draw-rect .cr.bl{bottom:-1px;left:-1px;border-bottom:1.5px solid #fff;border-left:1.5px solid #fff;}
+.draw-rect .cr.br{bottom:-1px;right:-1px;border-bottom:1.5px solid #fff;border-right:1.5px solid #fff;}
+
+/* RIGHT PANEL - pipeline */
+.right-panel{width:220px;display:flex;flex-direction:column;background:#050505;}
+
+/* stage indicator */
+.stage-indicator{padding:14px 16px;border-bottom:1px solid #111;}
+.si-label{font-size:8px;color:#333;letter-spacing:2px;margin-bottom:8px;}
+.si-steps{display:flex;flex-direction:column;gap:4px;}
+.si-step{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;border:1px solid transparent;transition:all 0.4s;}
+.si-step.done{border-color:#1e1e1e;background:#0e0e0e;}
+.si-step.active{border-color:rgba(255,255,255,0.2);background:rgba(255,255,255,0.04);box-shadow:0 0 12px rgba(255,255,255,0.05);}
+.si-step.idle{opacity:0.3;}
+.si-num{width:16px;height:16px;border-radius:50%;border:1px solid #222;display:flex;align-items:center;justify-content:center;font-size:7px;color:#444;flex-shrink:0;}
+.si-step.active .si-num{border-color:rgba(255,255,255,0.5);color:#fff;box-shadow:0 0 8px rgba(255,255,255,0.15);}
+.si-step.done .si-num{border-color:#333;color:#555;background:#111;}
+.si-step-name{font-size:9px;color:#333;letter-spacing:0.5px;}
+.si-step.active .si-step-name{color:#fff;}
+.si-step.done .si-step-name{color:#444;}
+.si-check{margin-left:auto;font-size:9px;color:#333;}
+.si-step.done .si-check{color:rgba(255,255,255,0.3);}
+
+/* live feed */
+.live-feed{flex:1;padding:12px 16px;border-bottom:1px solid #111;overflow:hidden;}
+.lf-label{font-size:8px;color:#333;letter-spacing:2px;margin-bottom:8px;}
+.feed-items{display:flex;flex-direction:column;gap:4px;overflow:hidden;}
+.feed-item{font-size:8px;color:#2a2a2a;padding:4px 8px;background:#0a0a0a;border:1px solid #111;border-radius:4px;display:flex;gap:6px;align-items:center;transition:all 0.3s;white-space:nowrap;overflow:hidden;}
+.feed-item.new{color:rgba(255,255,255,0.5);border-color:#1e1e1e;animation:fadeInFeed 0.4s ease;}
+.feed-item.highlight{color:rgba(255,255,255,0.7);border-color:rgba(255,255,255,0.15);background:rgba(255,255,255,0.03);}
+@keyframes fadeInFeed{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}
+.feed-dot{width:4px;height:4px;border-radius:50%;background:#222;flex-shrink:0;}
+.feed-item.new .feed-dot{background:rgba(255,255,255,0.4);}
+.feed-item.highlight .feed-dot{background:#fff;box-shadow:0 0 4px rgba(255,255,255,0.4);}
+
+/* stats */
+.stats-panel{padding:12px 16px;}
+.sp-label{font-size:8px;color:#333;letter-spacing:2px;margin-bottom:8px;}
+.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.stat-box{background:#0a0a0a;border:1px solid #131313;border-radius:5px;padding:7px 8px;}
+.stat-box.lit{border-color:rgba(255,255,255,0.12);background:rgba(255,255,255,0.02);box-shadow:0 0 8px rgba(255,255,255,0.04);}
+.stat-val{font-size:15px;font-weight:600;color:#fff;letter-spacing:-0.5px;line-height:1;}
+.stat-box:not(.lit) .stat-val{color:#333;}
+.stat-key{font-size:7px;color:#2a2a2a;letter-spacing:1.5px;margin-top:3px;}
+.stat-box.lit .stat-key{color:#555;}
+
+/* BOTTOM BAR */
+.bottom-bar{background:#040404;border-top:1px solid #111;padding:8px 18px;display:flex;align-items:center;justify-content:space-between;}
+.bb-left{display:flex;gap:16px;}
+.bb-chip{font-size:8px;color:#2a2a2a;letter-spacing:1.5px;display:flex;align-items:center;gap:4px;}
+.bb-chip.on{color:rgba(255,255,255,0.4);}
+.bb-chip::before{content:'';width:3px;height:3px;border-radius:50%;background:#222;}
+.bb-chip.on::before{background:rgba(255,255,255,0.5);box-shadow:0 0 4px rgba(255,255,255,0.3);}
+.progress-track{flex:1;height:2px;background:#111;border-radius:2px;margin:0 16px;overflow:hidden;}
+.progress-fill{height:100%;background:rgba(255,255,255,0.3);border-radius:2px;box-shadow:0 0 6px rgba(255,255,255,0.2);transition:width 0.5s;}
+.bb-right{font-size:8px;color:#2a2a2a;letter-spacing:1px;}
+</style>
+
+<div class="root">
+  <div class="topbar">
+    <div class="win-dots"><div class="wd"></div><div class="wd"></div><div class="wd"></div></div>
+    <div class="stage-tabs">
+      <span class="stab" id="stab0">UPLOAD</span>
+      <span class="stab" id="stab1">ANNOTATE</span>
+      <span class="stab" id="stab2">TRAIN</span>
+      <span class="stab" id="stab3">EXPORT</span>
+    </div>
+    <div class="live-badge"><div class="live-dot" id="ldot"></div>LIVE SESSION</div>
+  </div>
+
+  <div class="main">
+    <div class="left-panel" id="left">
+      <canvas id="mainCanvas"></canvas>
+      <div class="grid-bg"></div>
+      <div class="scanline"></div>
+      <div class="vignette"></div>
+      <div class="canvas-hud-tl">
+        <div class="hud-line bright" id="hud-stage">ANNOTATE MODE</div>
+        <div class="hud-line" id="hud-sub">DRAW BOUNDING BOX</div>
+      </div>
+      <div class="canvas-hud-tr">
+        <div class="hud-line" id="hud-obj">OBJECTS: 0</div>
+        <div class="hud-line" id="hud-conf">CONF AVG: —</div>
+      </div>
+      <div class="tool-cursor" id="cursor"></div>
+      <div class="draw-rect" id="drawRect">
+        <div class="cr tl"></div><div class="cr tr"></div><div class="cr bl"></div><div class="cr br"></div>
+      </div>
+    </div>
+
+    <div class="right-panel">
+      <div class="stage-indicator">
+        <div class="si-label">PIPELINE</div>
+        <div class="si-steps">
+          <div class="si-step" id="step0"><div class="si-num">01</div><div class="si-step-name">UPLOAD DATA</div><div class="si-check" id="chk0"></div></div>
+          <div class="si-step" id="step1"><div class="si-num">02</div><div class="si-step-name">ANNOTATE</div><div class="si-check" id="chk1"></div></div>
+          <div class="si-step" id="step2"><div class="si-num">03</div><div class="si-step-name">TRAIN MODEL</div><div class="si-check" id="chk2"></div></div>
+          <div class="si-step" id="step3"><div class="si-num">04</div><div class="si-step-name">EXPORT</div><div class="si-check" id="chk3"></div></div>
+        </div>
+      </div>
+
+      <div class="live-feed">
+        <div class="lf-label">ACTIVITY LOG</div>
+        <div class="feed-items" id="feedItems"></div>
+      </div>
+
+      <div class="stats-panel">
+        <div class="sp-label">SESSION STATS</div>
+        <div class="stats-grid">
+          <div class="stat-box lit"><div class="stat-val" id="s-ann">0</div><div class="stat-key">ANNOTATED</div></div>
+          <div class="stat-box lit"><div class="stat-val" id="s-obj">0</div><div class="stat-key">OBJECTS</div></div>
+          <div class="stat-box"><div class="stat-val" id="s-acc">—</div><div class="stat-key">ACCURACY</div></div>
+          <div class="stat-box"><div class="stat-val" id="s-fps">—</div><div class="stat-key">INFER/S</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bottom-bar">
+    <div class="bb-left">
+      <div class="bb-chip on" id="bc0">BBOX TOOL</div>
+      <div class="bb-chip" id="bc1">POLYGON</div>
+      <div class="bb-chip" id="bc2">AUTO-LABEL</div>
+      <div class="bb-chip" id="bc3">SEGMENT</div>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="pFill" style="width:0%"></div></div>
+    <div class="bb-right" id="bb-info">INITIALIZING...</div>
+  </div>
+</div>
+
+<script>
+(function(){
+const canvas = document.getElementById('mainCanvas');
+const ctx = canvas.getContext('2d');
+const leftPanel = document.getElementById('left');
+
+function resize(){
+  canvas.width = leftPanel.offsetWidth;
+  canvas.height = leftPanel.offsetHeight;
+}
+resize();
+
+// ── SHAPES (the "images" to annotate) ──
+const shapeTypes = ['rect','circle','triangle','hexagon','cross','ellipse'];
+const classNames = ['vehicle','person','object','animal','product','device','marker','unit'];
+const classColors = [
+  'rgba(255,255,255,0.75)',
+  'rgba(200,200,255,0.6)',
+  'rgba(255,220,200,0.6)',
+  'rgba(180,255,200,0.55)',
+  'rgba(255,200,230,0.55)',
+  'rgba(200,240,255,0.55)',
+  'rgba(255,240,180,0.55)',
+  'rgba(220,200,255,0.6)',
+];
+
+let shapes = [];
+let annotations = [];
+let frame = 0;
+let phase = 0; // 0=upload, 1=annotate, 2=train, 3=export
+let phaseTimer = 0;
+const PHASE_DURATIONS = [120,400,200,120];
+
+// cursor state
+let cursorX = 200, cursorY = 150;
+let cursorTargetX = 200, cursorTargetY = 150;
+let isDrawing = false;
+let drawStartX=0, drawStartY=0;
+let drawEndX=0, drawEndY=0;
+let autoAnnotIdx = 0;
+
+// counters
+let annCount = 0;
+let objCount = 0;
+
+// feed
+const feedEl = document.getElementById('feedItems');
+const feedMessages = [];
+
+function pushFeed(msg, highlight=false){
+  feedMessages.unshift({msg, highlight, age:0});
+  if(feedMessages.length>6) feedMessages.pop();
+  renderFeed();
+}
+
+function renderFeed(){
+  feedEl.innerHTML = '';
+  feedMessages.forEach((f,i)=>{
+    const d = document.createElement('div');
+    d.className = 'feed-item'+(i===0?' new':'')+(f.highlight?' highlight':'');
+    d.innerHTML = '<div class="feed-dot"></div><span>'+f.msg+'</span>';
+    feedEl.appendChild(d);
+  });
+}
+
+// ── GENERATE SHAPES ──
+function genShapes(){
+  shapes = [];
+  const W = canvas.width, H = canvas.height;
+  const count = 10;
+  for(let i=0;i<count;i++){
+    const cl = Math.floor(Math.random()*classNames.length);
+    shapes.push({
+      x: 60 + Math.random()*(W-120),
+      y: 50 + Math.random()*(H-100),
+      w: 35 + Math.random()*50,
+      h: 30 + Math.random()*45,
+      type: shapeTypes[Math.floor(Math.random()*shapeTypes.length)],
+      classIdx: cl,
+      rot: (Math.random()-0.5)*0.3,
+      opacity: 0,
+      vx: (Math.random()-0.5)*0.3,
+      vy: (Math.random()-0.5)*0.3,
+    });
+  }
+  annotations = [];
+}
+
+// ── DRAW SHAPE ──
+function drawShape(s, alpha){
+  const {x,y,w,h,type,classIdx,rot} = s;
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(rot);
+  ctx.globalAlpha = alpha * 0.65;
+  ctx.strokeStyle = classColors[classIdx];
+  ctx.fillStyle = classColors[classIdx].replace(/[\d.]+\)$/,'0.07)');
+  ctx.lineWidth = 1;
+
+  if(type==='rect'){
+    ctx.beginPath();ctx.rect(-w/2,-h/2,w,h);ctx.fill();ctx.stroke();
+  } else if(type==='circle'){
+    ctx.beginPath();ctx.ellipse(0,0,w/2,h/2,0,0,Math.PI*2);ctx.fill();ctx.stroke();
+  } else if(type==='triangle'){
+    ctx.beginPath();ctx.moveTo(0,-h/2);ctx.lineTo(w/2,h/2);ctx.lineTo(-w/2,h/2);ctx.closePath();ctx.fill();ctx.stroke();
+  } else if(type==='hexagon'){
+    ctx.beginPath();
+    for(let i=0;i<6;i++){const a=Math.PI/3*i-Math.PI/6;ctx.lineTo(Math.cos(a)*w/2,Math.sin(a)*h/2);}
+    ctx.closePath();ctx.fill();ctx.stroke();
+  } else if(type==='cross'){
+    const t=w*0.15;
+    ctx.beginPath();ctx.rect(-t,-h/2,t*2,h);ctx.rect(-w/2,-t,w,t*2);ctx.fill();ctx.stroke();
+  } else if(type==='ellipse'){
+    ctx.beginPath();ctx.ellipse(0,0,w/2*1.4,h/2*0.7,0,0,Math.PI*2);ctx.fill();ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ── DRAW ANNOTATION BOX ──
+function drawAnnotation(a, progress){
+  const {x,y,w,h,classIdx,conf,label} = a;
+  const p = Math.min(progress,1);
+  const cs = 7;
+  ctx.save();
+  ctx.globalAlpha = p * 0.9;
+
+  // fill
+  ctx.fillStyle = 'rgba(255,255,255,0.025)';
+  ctx.fillRect(x,y,w*p,h);
+
+  // border dashed
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 0.5;
+  ctx.setLineDash([3,5]);
+  ctx.strokeRect(x,y,w,h);
+  ctx.setLineDash([]);
+
+  // corners
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();ctx.moveTo(x,y+cs);ctx.lineTo(x,y);ctx.lineTo(x+cs,y);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(x+w-cs,y);ctx.lineTo(x+w,y);ctx.lineTo(x+w,y+cs);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(x,y+h-cs);ctx.lineTo(x,y+h);ctx.lineTo(x+cs,y+h);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(x+w-cs,y+h);ctx.lineTo(x+w,y+h);ctx.lineTo(x+w,y+h-cs);ctx.stroke();
+
+  // label
+  if(p > 0.5){
+    const ltext = label+' '+conf.toFixed(2);
+    ctx.font = '600 8px JetBrains Mono,monospace';
+    const tw = ctx.measureText(ltext).width;
+    ctx.globalAlpha = (p-0.5)*2*0.9;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(x,y-14,tw+10,13,2);
+    else ctx.rect(x,y-14,tw+10,13);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.fillText(ltext,x+5,y-4);
+  }
+  ctx.restore();
+}
+
+// ── DRAW TRAINING VIZ ──
+let trainProgress = 0;
+let lossHistory = [];
+function drawTrainingViz(){
+  const W=canvas.width, H=canvas.height;
+  ctx.save();
+
+  // loss graph area
+  const gx=40,gy=40,gw=W-80,gh=H-80;
+  ctx.strokeStyle='rgba(255,255,255,0.06)';
+  ctx.lineWidth=0.5;
+  ctx.strokeRect(gx,gy,gw,gh);
+
+  // grid lines
+  ctx.setLineDash([4,8]);
+  for(let i=1;i<4;i++){
+    ctx.beginPath();ctx.moveTo(gx,gy+gh*i/4);ctx.lineTo(gx+gw,gy+gh*i/4);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(gx+gw*i/4,gy);ctx.lineTo(gx+gw*i/4,gy+gh);ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // axis labels
+  ctx.font='7px JetBrains Mono,monospace';
+  ctx.fillStyle='rgba(255,255,255,0.2)';
+  ctx.fillText('LOSS',gx,gy-6);
+  ctx.fillText('EPOCH →',gx+gw-50,gy+gh+14);
+
+  // loss curve
+  if(lossHistory.length>1){
+    ctx.strokeStyle='rgba(255,255,255,0.7)';
+    ctx.lineWidth=1.5;
+    ctx.shadowColor='rgba(255,255,255,0.3)';
+    ctx.shadowBlur=6;
+    ctx.beginPath();
+    lossHistory.forEach((v,i)=>{
+      const px=gx+(i/(lossHistory.length-1))*gw;
+      const py=gy+gh*(1-v)*0.9+gh*0.05;
+      i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
+    });
+    ctx.stroke();
+    ctx.shadowBlur=0;
+
+    // mAP curve (inverted)
+    ctx.strokeStyle='rgba(255,255,255,0.25)';
+    ctx.lineWidth=1;
+    ctx.setLineDash([4,4]);
+    ctx.beginPath();
+    lossHistory.forEach((v,i)=>{
+      const px=gx+(i/(lossHistory.length-1))*gw;
+      const py=gy+gh*(v)*0.85+gh*0.08;
+      i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // epoch indicator
+  const epx = gx + trainProgress*gw;
+  ctx.strokeStyle='rgba(255,255,255,0.15)';
+  ctx.lineWidth=1;
+  ctx.setLineDash([2,4]);
+  ctx.beginPath();ctx.moveTo(epx,gy);ctx.lineTo(epx,gy+gh);ctx.stroke();
+  ctx.setLineDash([]);
+
+  // labels in graph
+  ctx.font='8px JetBrains Mono,monospace';
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  ctx.fillText('LOSS',gx+8,gy+20);
+  ctx.fillStyle='rgba(255,255,255,0.2)';
+  ctx.fillText('mAP',gx+8,gy+34);
+
+  ctx.restore();
+}
+
+// ── DRAW EXPORT VIZ ──
+function drawExportViz(){
+  const W=canvas.width, H=canvas.height;
+  ctx.save();
+  
+  // Dim the busy background shapes so progress bars and text pop cleanly
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(0,0,W,H);
+
+  const formats=['COCO JSON','YOLO v9','VOC XML','TF Record','CSV'];
+  const cx=W/2, startY=50;
+  const spacing=(H-80)/formats.length;
+
+  ctx.font='600 9px JetBrains Mono,monospace';
+  formats.forEach((f,i)=>{
+    const y=startY+i*spacing+spacing/2;
+    const prog=Math.min(1,(exportProgress-(i*0.15))/0.5);
+    if(prog<=0) return;
+    const barW=(W-120)*prog;
+
+    ctx.globalAlpha=0.6+prog*0.3;
+    ctx.strokeStyle='rgba(255,255,255,0.12)';
+    ctx.lineWidth=0.5;
+    ctx.strokeRect(60,y-10,W-120,18);
+
+    ctx.fillStyle=`rgba(255,255,255,${0.06+prog*0.04})`;
+    ctx.fillRect(60,y-10,barW,18);
+
+    ctx.fillStyle=`rgba(255,255,255,${0.3+prog*0.5})`;
+    ctx.fillText(f,70,y+3);
+
+    if(prog>=1){
+      ctx.fillStyle='rgba(255,255,255,0.7)';
+      ctx.fillText('✓ READY',W-110,y+3);
+    } else {
+      ctx.fillStyle='rgba(255,255,255,0.3)';
+      ctx.fillText(Math.round(prog*100)+'%',W-70,y+3);
+    }
+  });
+  ctx.restore();
+}
+
+let exportProgress=0;
+
+// ── UPLOAD VIZ ──
+let uploadProgress=0;
+function drawUploadViz(){
+  const W=canvas.width, H=canvas.height;
+  ctx.save();
+  const files=[
+    {name:'dataset_v2.zip',size:'128 MB',imgs:2400},
+    {name:'validation_set.zip',size:'32 MB',imgs:600},
+    {name:'test_batch.zip',size:'14 MB',imgs:280},
+  ];
+  const startY=H/2-60;
+  files.forEach((f,i)=>{
+    const y=startY+i*55;
+    const prog=Math.min(1,(uploadProgress-(i*0.25))/0.6);
+    if(prog<=0) return;
+    ctx.globalAlpha=0.4+prog*0.5;
+
+    // card
+    ctx.strokeStyle='rgba(255,255,255,0.08)';
+    ctx.fillStyle='rgba(255,255,255,0.02)';
+    ctx.lineWidth=0.5;
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(W/2-140,y,280,42,4);
+    else ctx.rect(W/2-140,y,280,42);
+    ctx.fill();ctx.stroke();
+
+    ctx.font='600 9px JetBrains Mono,monospace';
+    ctx.fillStyle='rgba(255,255,255,0.7)';
+    ctx.fillText(f.name,W/2-132,y+14);
+
+    ctx.font='8px JetBrains Mono,monospace';
+    ctx.fillStyle='rgba(255,255,255,0.25)';
+    ctx.fillText(f.size+' · '+f.imgs+' IMAGES',W/2-132,y+26);
+
+    // progress bar
+    ctx.fillStyle='rgba(255,255,255,0.06)';
+    ctx.fillRect(W/2-132,y+32,260,3);
+    ctx.fillStyle='rgba(255,255,255,'+( 0.3+prog*0.4 )+')';
+    ctx.fillRect(W/2-132,y+32,260*Math.min(prog,1),3);
+    ctx.shadowColor='rgba(255,255,255,0.3)';
+    ctx.shadowBlur=4;
+    ctx.fillRect(W/2-132,y+32,260*Math.min(prog,1),3);
+    ctx.shadowBlur=0;
+
+    if(prog>=1){
+      ctx.fillStyle='rgba(255,255,255,0.5)';
+      ctx.font='600 8px JetBrains Mono,monospace';
+      ctx.fillText('DONE',W/2+106,y+14);
+    }
+  });
+  ctx.restore();
+}
+
+// ── AUTO ANNOTATE SEQUENCE ──
+let annotateQueue = [];
+let annotateTimer = 0;
+let activeAnnotations = [];
+
+function queueAnnotations(){
+  annotateQueue = shapes.map((s,i)=>({
+    shapeIdx:i,
+    x: s.x - s.w/2 - 10,
+    y: s.y - s.h/2 - 10,
+    w: s.w + 20,
+    h: s.h + 20,
+    label: classNames[s.classIdx],
+    conf: 0.85 + Math.random()*0.13,
+    progress: 0,
+    classIdx: s.classIdx,
+  }));
+  annotateQueue.sort(()=>Math.random()-0.5);
+}
+
+// ── CURSOR ANIMATION ──
+let cursorPath = [];
+let cursorPathIdx = 0;
+function buildCursorPath(){
+  if(annotateQueue.length===0) return;
+  cursorPath = [];
+  annotateQueue.forEach(a=>{
+    cursorPath.push({x:a.x-5,y:a.y-5,action:'moveTo'});
+    cursorPath.push({x:a.x+a.w+5,y:a.y+a.h+5,action:'draw',ann:a});
+  });
+}
+
+// ── PHASE SETUP ──
+function setPhase(p){
+  phase=p; phaseTimer=0;
+  [0,1,2,3].forEach(i=>{
+    const el=document.getElementById('step'+i);
+    const chk=document.getElementById('chk'+i);
+    el.className='si-step '+(i<p?'done':(i===p?'active':'idle'));
+    chk.textContent=i<p?'✓':'';
+    document.getElementById('stab'+i).className='stab'+(i===p?' on':'');
+  });
+
+  if(p===0){
+    uploadProgress=0;
+    document.getElementById('hud-stage').textContent='UPLOAD MODE';
+    document.getElementById('hud-sub').textContent='IMPORTING DATASETS';
+    document.getElementById('bc0').className='bb-chip on';
+    document.getElementById('bb-info').textContent='PARSING FILES...';
+    genShapes();
+    pushFeed('Session started',true);
+    pushFeed('Awaiting upload...');
+  } else if(p===1){
+    shapes.forEach(s=>s.opacity=1);
+    queueAnnotations();
+    buildCursorPath();
+    annotateTimer=0; autoAnnotIdx=0; activeAnnotations=[];
+    cursorPathIdx=0;
+    document.getElementById('hud-stage').textContent='ANNOTATE MODE';
+    document.getElementById('hud-sub').textContent='DRAWING BOUNDING BOXES';
+    document.getElementById('bc0').className='bb-chip on';
+    document.getElementById('bc1').className='bb-chip';
+    document.getElementById('bb-info').textContent='BBOX TOOL ACTIVE';
+    pushFeed('Upload complete — 3,280 images',true);
+    pushFeed('Auto-label queue: '+shapes.length+' objects');
+  } else if(p===2){
+    trainProgress=0; lossHistory=[];
+    document.getElementById('hud-stage').textContent='TRAIN MODE';
+    document.getElementById('hud-sub').textContent='RUNNING MODEL PIPELINE';
+    document.getElementById('s-acc').textContent='—';
+    document.getElementById('s-fps').textContent='—';
+    const sb=document.querySelectorAll('.stat-box');
+    sb[2].classList.remove('lit');sb[3].classList.remove('lit');
+    document.getElementById('bb-info').textContent='TRAINING YOLOv9...';
+    pushFeed('Annotation complete — '+annCount+' labels',true);
+    pushFeed('Training initiated...');
+  } else if(p===3){
+    exportProgress=0;
+    document.getElementById('hud-stage').textContent='EXPORT MODE';
+    document.getElementById('hud-sub').textContent='PACKAGING RESULTS';
+    document.getElementById('bb-info').textContent='EXPORTING FORMATS...';
+    pushFeed('Training complete — mAP: 94.1%',true);
+    pushFeed('Preparing export packages...');
+  }
+}
+
+genShapes();
+setPhase(0);
+
+// ── MAIN LOOP ──
+function tick(){
+  const W=canvas.width, H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  frame++; phaseTimer++;
+
+  // live dot pulse
+  const ldot=document.getElementById('ldot');
+  ldot.style.opacity=(Math.sin(frame*0.05)*0.3+0.7).toFixed(2);
+
+  // ──── PHASE 0: UPLOAD ────
+  if(phase===0){
+    uploadProgress = Math.min(1, phaseTimer/100);
+    drawUploadViz();
+    document.getElementById('pFill').style.width=(uploadProgress*100)+'%';
+    if(phaseTimer%30===0) pushFeed('Extracting batch '+(Math.floor(phaseTimer/30))+'...');
+    if(phaseTimer===50) pushFeed('Processing metadata...',true);
+    if(phaseTimer===80) document.getElementById('bb-info').textContent='VALIDATING IMAGES...';
+    if(phaseTimer>=PHASE_DURATIONS[0]) setPhase(1);
+  }
+
+  // ──── PHASE 1: ANNOTATE ────
+  else if(phase===1){
+    // draw shapes (they're the "images")
+    shapes.forEach((s,i)=>{
+      s.opacity = Math.min(1, s.opacity + 0.03);
+      drawShape(s, s.opacity);
+    });
+
+    // auto-annotate one by one
+    annotateTimer++;
+    const interval=35;
+    if(autoAnnotIdx < annotateQueue.length && annotateTimer % interval === 0){
+      const a=annotateQueue[autoAnnotIdx];
+      activeAnnotations.push(a);
+      a.progress=0;
+      autoAnnotIdx++;
+      annCount++;
+      objCount++;
+      document.getElementById('s-ann').textContent=annCount;
+      document.getElementById('s-obj').textContent=objCount;
+      document.getElementById('hud-obj').textContent='OBJECTS: '+objCount;
+      document.getElementById('hud-conf').textContent='CONF AVG: '+(0.87+Math.random()*0.09).toFixed(2);
+      pushFeed(a.label+' · conf '+a.conf.toFixed(2),(autoAnnotIdx%3===0));
+
+      // move cursor to shape
+      cursorTargetX = a.x + a.w/2;
+      cursorTargetY = a.y - 20;
+    }
+
+    // animate annotation progress
+    activeAnnotations.forEach(a=>{a.progress=Math.min(1,a.progress+0.06);});
+    activeAnnotations.forEach(a=>drawAnnotation(a,a.progress));
+
+    // cursor draw simulation
+    if(autoAnnotIdx > 0 && autoAnnotIdx <= annotateQueue.length){
+      const curr=annotateQueue[autoAnnotIdx-1];
+      if(curr && curr.progress<1){
+        const t=curr.progress;
+        if(t<0.5){
+          cursorTargetX=curr.x + (curr.w * t*2);
+          cursorTargetY=curr.y;
+        } else {
+          cursorTargetX=curr.x+curr.w;
+          cursorTargetY=curr.y + curr.h*(t-0.5)*2;
+        }
+      }
+    }
+
+    // update cursor
+    cursorX += (cursorTargetX - cursorX)*0.12;
+    cursorY += (cursorTargetY - cursorY)*0.12;
+    const cur=document.getElementById('cursor');
+    cur.style.left=(cursorX-10)+'px';
+    cur.style.top=(cursorY-10)+'px';
+
+    const prog=autoAnnotIdx/annotateQueue.length;
+    document.getElementById('pFill').style.width=(prog*100)+'%';
+
+    if(autoAnnotIdx>=annotateQueue.length && annotateTimer>annotateQueue.length*interval+60){
+      setPhase(2);
+    }
+  }
+
+  // ──── PHASE 2: TRAIN ────
+  else if(phase===2){
+    document.getElementById('cursor').style.left='-40px';
+    trainProgress = Math.min(1, phaseTimer/180);
+
+    const noise=(Math.random()-0.5)*0.015;
+    const lossVal = Math.pow(1-trainProgress,1.6)*0.85 + 0.04 + noise;
+    lossHistory.push(Math.max(0.04,lossVal));
+    if(lossHistory.length>80) lossHistory.shift();
+
+    drawTrainingViz();
+
+    if(phaseTimer%20===0){
+      const ep=Math.floor(trainProgress*50);
+      const map=(trainProgress*0.82+0.1)*100;
+      pushFeed('Epoch '+ep+' · loss '+lossVal.toFixed(3),(ep%5===0));
+      document.getElementById('bb-info').textContent='EPOCH '+ep+'/50';
+      document.getElementById('pFill').style.width=(trainProgress*100)+'%';
+    }
+    if(trainProgress>0.5 && document.getElementById('s-acc').textContent==='—'){
+      document.getElementById('s-acc').textContent='91.2%';
+      document.getElementById('s-fps').textContent='42';
+      document.querySelectorAll('.stat-box')[2].classList.add('lit');
+      document.querySelectorAll('.stat-box')[3].classList.add('lit');
+      pushFeed('mAP passing 90% threshold',true);
+    }
+    if(trainProgress>=1){
+      document.getElementById('s-acc').textContent='94.1%';
+      document.getElementById('s-fps').textContent='47';
+      setTimeout(()=>setPhase(3),400);
+    }
+  }
+
+  // ──── PHASE 3: EXPORT ────
+  else if(phase===3){
+    // re-draw shapes + annotations faded
+    shapes.forEach(s=>drawShape(s,0.25));
+    activeAnnotations.forEach(a=>drawAnnotation(a,0.3));
+    exportProgress=Math.min(1,phaseTimer/90);
+    drawExportViz();
+    document.getElementById('pFill').style.width=(exportProgress*100)+'%';
+    if(phaseTimer%18===0 && exportProgress<1) pushFeed('Packaging '+['COCO JSON','YOLO v9','VOC XML','TF Record'][Math.floor(phaseTimer/18)%4]+'...');
+    
+    // Gated block to prevent 60fps feed spamming and infinite setTimeouts
+    if(exportProgress>=1 && document.getElementById('bb-info').textContent !== 'EXPORT COMPLETE ✓'){
+      pushFeed('All formats ready for download',true);
+      document.getElementById('bb-info').textContent='EXPORT COMPLETE ✓';
+      setTimeout(()=>{
+        annCount=0;objCount=0;
+        document.getElementById('s-ann').textContent='0';
+        document.getElementById('s-obj').textContent='0';
+        setPhase(0);
+      },2200);
+    }
+  }
+
+  requestAnimationFrame(tick);
+}
+tick();
+window.addEventListener('resize',resize);
+})();
+</script>

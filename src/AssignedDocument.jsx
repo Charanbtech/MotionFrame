@@ -23,7 +23,7 @@ const AssignedDocument = () => {
     // Load all users
     const loadUsers = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/users');
+        const response = await fetch('/api/users');
         if (response.ok) {
           const usersData = await response.json();
           setUsers(usersData);
@@ -36,7 +36,7 @@ const AssignedDocument = () => {
     // Load uploaded files to calculate stats
     const loadUploadedFiles = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/bulk-upload/files');
+        const response = await fetch('/api/bulk-upload/files');
         if (response.ok) {
           const files = await response.json();
           setUploadedFiles(files);
@@ -171,7 +171,7 @@ const AssignedDocument = () => {
     setUserToExport(user);
     
     try {
-      const response = await fetch(`http://localhost:8000/api/users/${user.id}/export`);
+      const response = await fetch(`/api/users/${user.id}/export`);
       
       if (!response.ok) {
         if (response.status === 404) {
@@ -223,7 +223,7 @@ const AssignedDocument = () => {
         return;
       }
 
-      const response = await fetch(`http://localhost:8000/api/users/${userToUpdate.id}/owner`, {
+      const response = await fetch(`/api/users/${userToUpdate.id}/owner`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -236,7 +236,7 @@ const AssignedDocument = () => {
 
       if (response.ok) {
         // Reload users
-        const usersResponse = await fetch('http://localhost:8000/api/users');
+        const usersResponse = await fetch('/api/users');
         if (usersResponse.ok) {
           const usersData = await usersResponse.json();
           setUsers(usersData);
@@ -313,8 +313,7 @@ const AssignedDocument = () => {
               </div>
             </div>
 
-            <div className="stat-card" style={{ backgroundColor: 'transparent', border: 'none', boxShadow: 'none' }}>
-            </div>
+
 
             <div className="dashboard-buttons">
               <button 
@@ -341,11 +340,11 @@ const AssignedDocument = () => {
             <h4 className="table-title">All Users</h4>
             <div className="d-flex gap-2">
               <Button variant="outline-secondary" className="filter-btn">
-                <span>🔽</span> Filters
+                <i className="fas fa-filter"></i> Filters
               </Button>
               <InputGroup style={{ width: '300px' }}>
                 <InputGroup.Text>
-                  🔍
+                  <i className="fas fa-search"></i>
                 </InputGroup.Text>
                 <Form.Control
                   type="text"

@@ -29,3 +29,13 @@ dist-ssr
 *.sln
 *.sw?
 *.pt
+*.pth
+
+# Backend ignores
+back_end/venv/
+back_end/__pycache__/
+back_end/roboflow.db
+back_end/uploads/
+back_end/exports/
+back_end/runs/
+back_end/versions/

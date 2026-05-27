@@ -1,0 +1,149 @@
+.ml-root {
+  min-height: 100vh;
+  background: #0f0f0f;
+  color: #d8d8d8;
+  font-family: 'Inter', -apple-system, sans-serif;
+  padding: 40px;
+}
+
+.ml-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.ml-header {
+  margin-bottom: 32px;
+}
+
+.ml-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 8px 0;
+}
+
+.ml-subtitle {
+  font-size: 14px;
+  color: #888;
+}
+
+.ml-table-container {
+  background: #151515;
+  border: 1px solid #222;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.ml-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.ml-table th {
+  background: #1a1a1a;
+  padding: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid #222;
+}
+
+.ml-table td {
+  padding: 16px;
+  font-size: 14px;
+  border-bottom: 1px solid #222;
+  vertical-align: middle;
+}
+
+.ml-table tr:last-child td {
+  border-bottom: none;
+}
+
+.ml-table tr:hover td {
+  background: rgba(255,255,255,0.02);
+}
+
+/* Active Row Highlight */
+.ml-row-active td {
+  background: rgba(34, 197, 94, 0.05) !important;
+}
+
+.ml-status-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.ml-status-badge.active {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+.ml-status-badge.deployed {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+.ml-status-badge.archived {
+  background: rgba(255, 255, 255, 0.05);
+  color: #888;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ml-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ml-btn {
+  background: transparent;
+  border: 1px solid #333;
+  color: #ccc;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ml-btn:hover:not(:disabled) {
+  background: #222;
+  color: #fff;
+}
+
+.ml-btn-deploy {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #fff;
+}
+.ml-btn-deploy:hover:not(:disabled) {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+.ml-btn-deploy:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ml-btn-danger:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.ml-empty {
+  padding: 64px;
+  text-align: center;
+  color: #666;
+  font-size: 14px;
+}
+
+.ml-metric-col {
+  font-family: 'JetBrains Mono', monospace;
+  color: #aaa;
+}

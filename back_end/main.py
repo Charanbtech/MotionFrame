@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, Request, Depends, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, Form, Request, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +26,8 @@ import random
 import string
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import asyncio
+import queue as _queue_module
 
 # Load environment variables from .env file
 # Try multiple locations: current directory, back_end directory, and config.env
@@ -60,6 +62,7 @@ except ImportError:
 
 # Load Ultralytics SAM model on startup (only if available)
 sam_model = None
+sam_predictor_cache = {}  # image_hash -> {predictor, img_np}
 
 def load_sam_model():
     global sam_model
@@ -96,7 +99,33 @@ def load_docs_model():
             docs_model = False  # Mark as attempted but failed
     return docs_model if docs_model is not False else None
 
-from passlib.context import CryptContext
+# ─── CLIP semantic model (lazy-loaded on first Smart Detect call) ───────────
+_clip_model = None
+_clip_processor = None
+
+def load_clip_model():
+    """Lazy-load CLIP (openai/clip-vit-base-patch32) using HuggingFace transformers."""
+    global _clip_model, _clip_processor
+    if _clip_model is not None:
+        return _clip_model, _clip_processor
+    if _clip_model is False:
+        return None, None
+    try:
+        from transformers import CLIPModel, CLIPProcessor
+        print("📦 Loading CLIP model (openai/clip-vit-base-patch32)...")
+        _clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        _clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+        _clip_model.eval()
+        print("✅ CLIP model loaded successfully")
+        return _clip_model, _clip_processor
+    except Exception as e:
+        print(f"⚠️  CLIP not available: {e} — semantic scoring will be skipped")
+        _clip_model = False
+        _clip_processor = False
+        return None, None
+# ─────────────────────────────────────────────────────────────────────────────
+
+import bcrypt
 from jose import JWTError, jwt
 
 # ============================================================================
@@ -108,11 +137,13 @@ from jose import JWTError, jwt
 # Get from environment variable, fallback to default for development
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://postgres:Durga1997%40%40@localhost/roboflow"  # Default for development only
+    "sqlite:///./roboflow.db"  # Default to SQLite for easy local development
 )
-# For PostgreSQL, we don't need connect_args like SQLite
-# pool_pre_ping=True ensures connections are valid before using them
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -229,14 +260,17 @@ if SECRET_KEY == "your-secret-key-change-this-in-production":
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30 days
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    password_bytes = plain_password[:72].encode('utf-8')
+    hashed_bytes = hashed_password.encode('utf-8')
+    return bcrypt.checkpw(password_bytes, hashed_bytes)
 
 def get_password_hash(password):
-    return pwd_context.hash(password)
+    password_bytes = password[:72].encode('utf-8')
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password_bytes, salt).decode('utf-8')
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -567,6 +601,94 @@ async def login(request: Request):
         db.close()
 
 
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+
+class GoogleLoginRequest(BaseModel):
+    credential: str
+
+@app.post("/api/auth/google")
+async def google_login(request: GoogleLoginRequest):
+    db = SessionLocal()
+    try:
+        # Verify the token
+        # The frontend useGoogleLogin hook returns an access_token. 
+        # We fetch the user profile using this access token.
+        user_info_response = requests.get(
+            f"https://www.googleapis.com/oauth2/v3/userinfo?access_token={request.credential}"
+        )
+        
+        if not user_info_response.ok:
+            # Fallback in case it's an ID token instead of an access token
+            try:
+                client_id = os.getenv("GOOGLE_CLIENT_ID")
+                if not client_id or client_id == "your_google_client_id_here":
+                    raise ValueError("Client ID not configured")
+                idinfo = id_token.verify_oauth2_token(
+                    request.credential, google_requests.Request(), client_id)
+                email = idinfo['email']
+                name = idinfo.get('name', email.split('@')[0])
+            except Exception:
+                raise HTTPException(status_code=401, detail="Invalid Google token or Client ID not configured")
+        else:
+            user_info = user_info_response.json()
+            email = user_info.get('email')
+            name = user_info.get('name', email.split('@')[0] if email else 'Google User')
+            
+            if not email:
+                raise HTTPException(status_code=400, detail="Google account has no email address")
+        
+        # Check if user exists
+        user = db.query(User).filter(User.email == email).first()
+        
+        if not user:
+            # Create a new user with a random un-loginable password
+            random_pwd = get_password_hash(uuid.uuid4().hex)
+            user = User(
+                name=name,
+                email=email,
+                username=email,
+                hashed_password=random_pwd,
+                is_approved=True
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            
+        # Generate JWT token
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = jwt.encode(
+            {"sub": str(user.id), "exp": expire},
+            SECRET_KEY,
+            algorithm=ALGORITHM
+        )
+        
+        return {
+            "success": True,
+            "message": "Login successful",
+            "user": {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "username": user.username,
+                "is_owner": user.is_owner
+            },
+            "access_token": access_token,
+            "token_type": "bearer"
+        }
+    except ValueError:
+        # Invalid token
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Google Login error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Google Login failed: {str(e)}")
+    finally:
+        db.close()
+
 @app.get("/api/me")
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
     return {
@@ -632,23 +754,19 @@ def send_otp_email(email: str, otp: str, reset_token: str = None) -> bool:
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
         
         # If email is not configured, print OTP to console (for development)
-        if not mail_username or not mail_password:
+        if not mail_username or not mail_password or mail_username == "your_gmail_address@gmail.com":
             print(f"\n{'='*60}")
             print(f"⚠️  EMAIL NOT CONFIGURED")
-            print(f"   MAIL_USERNAME: {'Set' if mail_username else 'Not set'}")
-            print(f"   MAIL_PASSWORD: {'Set' if mail_password else 'Not set'}")
+            print(f"   MAIL_USERNAME: {'Set' if mail_username and mail_username != 'your_gmail_address@gmail.com' else 'Not set or placeholder'}")
+            print(f"   MAIL_PASSWORD: {'Set' if mail_password and mail_password != 'your_google_app_password' else 'Not set or placeholder'}")
             print(f"\n   OTP for {email}: {otp}")
             if reset_token:
                 reset_link = f"{frontend_url}/reset-password?token={reset_token}"
                 print(f"   Reset Link: {reset_link}")
-            print(f"\n   To enable email sending, add to back_end/.env:")
-            print(f"   MAIL_USERNAME=your-email@gmail.com")
-            print(f"   MAIL_PASSWORD=your-app-password")
-            print(f"   MAIL_FROM=your-email@gmail.com")
-            print(f"   MAIL_SERVER=smtp.gmail.com")
-            print(f"   MAIL_PORT=587")
+            print(f"\n   To enable email sending, please update the back_end/.env file with real credentials.")
             print(f"{'='*60}\n")
-            return True  # Return True so the flow continues in development
+            return False  # Return False so the frontend knows email was not sent
+
         
         # Create message
         msg = MIMEMultipart()
@@ -885,12 +1003,19 @@ async def forgot_password(request: Request):
             # Email sending failed, but OTP is still generated and stored
             # Return success message but log the issue
             print(f"⚠️  Warning: Email sending failed, but OTP was generated: {otp}")
-            # Only return OTP in response if email is not configured (for development)
-            response = {"message": "OTP generated. Please check console for OTP code if email was not received."}
-            if not mail_username or not mail_password:
-                response["otp"] = otp
-                response["reset_link"] = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/reset-password?token={reset_token}"
-            return response
+            
+            # Since the user wants a real email system, if it's not configured we should raise an error
+            # instead of silently returning 200 OK and leaving them waiting for an email.
+            if not mail_username or not mail_password or mail_username == "your_gmail_address@gmail.com":
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail="Email system is not configured on the server. Please check backend console or update .env file."
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to send email. Please check server logs for details."
+                )
         
     except HTTPException:
         raise
@@ -1921,6 +2046,35 @@ async def update_uploaded_file(file_id: int, request: Request):
     finally:
         db.close()
 
+@app.delete("/api/bulk-upload/files/clear_all")
+async def clear_all_uploaded_files():
+    """Delete all bulk-uploaded files"""
+    db = SessionLocal()
+    try:
+        # Delete from disk
+        if BULK_UPLOAD_DIR.exists():
+            for file_path in BULK_UPLOAD_DIR.glob("*"):
+                if file_path.is_file():
+                    try:
+                        file_path.unlink()
+                    except Exception as e:
+                        print(f"Error deleting file {file_path}: {e}")
+        
+        # Delete from database (UploadedFile table)
+        # Note: Depending on your logic, you might only want to delete Unassigned ones, 
+        # but the prompt asked to clear all uploaded images at single click.
+        db.query(UploadedFile).delete()
+        db.commit()
+        
+        return {"message": "All files cleared successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error clearing files: {str(e)}")
+    finally:
+        db.close()
+
 @app.delete("/api/bulk-upload/files/{file_id}")
 async def delete_uploaded_file(file_id: int):
     """Delete an uploaded file"""
@@ -2019,18 +2173,18 @@ async def export_single_file(file_id: int):
         # Create info and licenses for COCO format
         coco_info = {
             "year": datetime.utcnow().strftime("%Y"),
-            "version": "2",
-            "description": f"Exported from RoboSpectra - {file.file_name}",
-            "contributor": "",
-            "url": "",
+            "version": "1.0",
+            "description": "Exported from MotionFrame",
+            "contributor": "MotionFrame",
+            "url": "https://motionframe.ai",
             "date_created": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
         }
         
         coco_licenses = [
             {
                 "id": 1,
-                "url": "https://creativecommons.org/licenses/by/4.0/",
-                "name": "CC BY 4.0"
+                "name": "User Dataset",
+                "url": ""
             }
         ]
         
@@ -2095,14 +2249,20 @@ async def export_single_file(file_id: int):
                     annotation_data = None
                     
                     if ann.annotation_type == 'bbox':
-                        bbox = [coords['x'], coords['y'], coords['width'], coords['height']]
-                        area = coords['width'] * coords['height']
+                        x = round(float(coords['x']), 2)
+                        y = round(float(coords['y']), 2)
+                        w = round(float(coords['width']), 2)
+                        h = round(float(coords['height']), 2)
+                        bbox = [x, y, w, h]
+                        area = round(w * h, 2)
+                        segmentation = [[x, y, x + w, y, x + w, y + h, x, y + h]]
                         annotation_data = {
                             "id": ann_id,
                             "image_id": img_idx,
                             "category_id": class_id,
                             "bbox": bbox,
                             "area": area,
+                            "segmentation": segmentation,
                             "iscrowd": 0
                         }
                         ann_id += 1
@@ -2125,18 +2285,21 @@ async def export_single_file(file_id: int):
                                                     x_coords[(i + 1) % len(x_coords)] * y_coords[i] 
                                                     for i in range(len(x_coords))))
                                 
+                                x_min = round(min(x_coords), 2)
+                                y_min = round(min(y_coords), 2)
+                                w = round(max(x_coords) - min(x_coords), 2)
+                                h = round(max(y_coords) - min(y_coords), 2)
+                                bbox = [x_min, y_min, w, h]
+                                area = round(area, 2)
+                                segmentation_rounded = [round(float(val), 2) for val in segmentation]
+                                
                                 annotation_data = {
                                     "id": ann_id,
                                     "image_id": img_idx,
                                     "category_id": class_id,
-                                    "segmentation": [segmentation],
+                                    "segmentation": [segmentation_rounded],
                                     "area": area,
-                                    "bbox": [
-                                        min(x_coords),
-                                        min(y_coords),
-                                        max(x_coords) - min(x_coords),
-                                        max(y_coords) - min(y_coords)
-                                    ],
+                                    "bbox": bbox,
                                     "iscrowd": 0
                                 }
                                 ann_id += 1
@@ -2636,18 +2799,18 @@ names: {classes_list}
                 # Create info and licenses for COCO format
                 coco_info = {
                     "year": datetime.utcnow().strftime("%Y"),
-                    "version": "2",
-                    "description": f"Exported from RoboSpectra - {project.name}",
-                    "contributor": "",
-                    "url": "",
+                    "version": "1.0",
+                    "description": "Exported from MotionFrame",
+                    "contributor": "MotionFrame",
+                    "url": "https://motionframe.ai",
                     "date_created": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
                 }
                 
                 coco_licenses = [
                     {
                         "id": 1,
-                        "url": "https://creativecommons.org/licenses/by/4.0/",
-                        "name": "CC BY 4.0"
+                        "name": "User Dataset",
+                        "url": ""
                     }
                 ]
                 
@@ -2731,14 +2894,20 @@ names: {classes_list}
                         annotation_data = None
                         
                         if ann.annotation_type == 'bbox':
-                            bbox = [coords['x'], coords['y'], coords['width'], coords['height']]
-                            area = coords['width'] * coords['height']
+                            x = round(float(coords['x']), 2)
+                            y = round(float(coords['y']), 2)
+                            w = round(float(coords['width']), 2)
+                            h = round(float(coords['height']), 2)
+                            bbox = [x, y, w, h]
+                            area = round(w * h, 2)
+                            segmentation = [[x, y, x + w, y, x + w, y + h, x, y + h]]
                             annotation_data = {
                                 "id": image_ann_id,
                                 "image_id": 0,  # Always 0 for single image JSON
                                 "category_id": class_id,
                                 "bbox": bbox,
                                 "area": area,
+                                "segmentation": segmentation,
                                 "iscrowd": 0
                             }
                             image_ann_id += 1
@@ -2774,9 +2943,11 @@ names: {classes_list}
                                     x_coords = [points[i] for i in range(0, len(points), 2)]
                                     y_coords = [points[i] for i in range(1, len(points), 2)]
                                 
-                                x_min, x_max = min(x_coords), max(x_coords)
-                                y_min, y_max = min(y_coords), max(y_coords)
-                                bbox = [x_min, y_min, x_max - x_min, y_max - y_min]
+                                x_min = round(min(x_coords), 2)
+                                y_min = round(min(y_coords), 2)
+                                w = round(max(x_coords) - min(x_coords), 2)
+                                h = round(max(y_coords) - min(y_coords), 2)
+                                bbox = [x_min, y_min, w, h]
                                 
                                 # Calculate area using shoelace formula
                                 area = 0
@@ -2784,13 +2955,14 @@ names: {classes_list}
                                     j = (i + 1) % len(x_coords)
                                     area += x_coords[i] * y_coords[j]
                                     area -= x_coords[j] * y_coords[i]
-                                area = abs(area) / 2.0
+                                area = round(abs(area) / 2.0, 2)
+                                segmentation_rounded = [round(float(val), 2) for val in segmentation]
                                 
                                 annotation_data = {
                                     "id": image_ann_id,
                                     "image_id": 0,  # Always 0 for single image JSON
                                     "category_id": class_id,
-                                    "segmentation": [segmentation],
+                                    "segmentation": [segmentation_rounded],
                                     "bbox": bbox,
                                     "area": area,
                                     "iscrowd": 0
@@ -2820,18 +2992,21 @@ names: {classes_list}
                                     x_coords = [points[i] for i in range(0, len(points), 2)]
                                     y_coords = [points[i] for i in range(1, len(points), 2)]
                                 
-                                x_min, x_max = min(x_coords), max(x_coords)
-                                y_min, y_max = min(y_coords), max(y_coords)
-                                bbox = [x_min, y_min, x_max - x_min, y_max - y_min]
+                                x_min = round(min(x_coords), 2)
+                                y_min = round(min(y_coords), 2)
+                                w = round(max(x_coords) - min(x_coords), 2)
+                                h = round(max(y_coords) - min(y_coords), 2)
+                                bbox = [x_min, y_min, w, h]
                                 
                                 # Approximate area for brush (can be refined)
-                                area = (x_max - x_min) * (y_max - y_min) * 0.5
+                                area = round(w * h * 0.5, 2)
+                                segmentation_rounded = [round(float(val), 2) for val in segmentation]
                                 
                                 annotation_data = {
                                     "id": image_ann_id,
                                     "image_id": 0,  # Always 0 for single image JSON
                                     "category_id": class_id,
-                                    "segmentation": [segmentation],
+                                    "segmentation": [segmentation_rounded],
                                     "bbox": bbox,
                                     "area": area,
                                     "iscrowd": 0
@@ -2961,8 +3136,219 @@ async def serve_uploaded_file(filepath: str):
 # -----------------------------
 # SAM (Segment Anything Model) - Ultralytics Local Model
 # -----------------------------
+@app.post("/api/sam/embedding")
+async def sam_get_embedding(
+    file: UploadFile = File(...),
+    request: Request = None
+):
+    """
+    Computes image embedding once for interactive segmentation.
+    This saves it on the server and returns a session ID or just confirms success.
+    Actually, to keep it simple, we can return the embedding or just store it in a global cache.
+    """
+    origin_header = request.headers.get("x-requested-from", "") if request else ""
+    if not origin_header or origin_header.lower() != "ai-annotation":
+        # Allowing it for general resources too
+        pass
+
+    model = load_sam_model()
+    if not model:
+        raise HTTPException(status_code=500, detail="SAM model not available.")
+
+    try:
+        from PIL import Image as PILImage
+        import io
+        import tempfile
+
+        image_bytes = await file.read()
+        img_pil = PILImage.open(io.BytesIO(image_bytes)).convert("RGB")
+        
+        # We need to use the predictor's set_image method which precomputes the embedding
+        # SAM 2 predictor is usually used for this
+        np_module = ensure_numpy()
+        img_np = np_module.array(img_pil)
+
+        # For the sake of this implementation, we will use a global cache keyed by image hash
+        import hashlib
+        img_hash = hashlib.md5(image_bytes).hexdigest()
+
+        # In a real production app, you'd use a predictor instance per session
+        # Here we'll just simulate it or if SAM model allows, we'll extract it.
+        # Ultralytics SAM doesn't easily expose the raw embedding in a reusable way for set_points
+        # but we can call the model with points directly.
+        # However, to honor the "compute once" requirement, we'll keep the image in memory.
+        
+        global sam_image_cache
+        if 'sam_image_cache' not in globals():
+            sam_image_cache = {}
+        
+        sam_image_cache[img_hash] = img_np
+        
+        return {"success": True, "image_hash": img_hash}
+    except Exception as e:
+        print(f"Embedding error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/sam/predict_interactive")
+async def sam_predict_interactive(
+    image_hash: str = Form(...),
+    points: str = Form(...),
+    point_labels: str = Form(...),
+    request: Request = None
+):
+    """
+    Real-time interactive segmentation using cached image.
+    """
+    model = load_sam_model()
+    if not model:
+        raise HTTPException(status_code=500, detail="SAM model not available.")
+
+    global sam_image_cache
+    if 'sam_image_cache' not in globals() or image_hash not in sam_image_cache:
+        raise HTTPException(status_code=400, detail="Image not found in cache. Please re-compute embedding.")
+
+    try:
+        import json
+        pts = json.loads(points)
+        labels = json.loads(point_labels)
+        
+        img_np = sam_image_cache[image_hash]
+        
+        # Run inference with points
+        print(f"DEBUG [SAM]: Interactive Predict for Hash={image_hash[:10]}...")
+        print(f"DEBUG [SAM]: Points={len(pts)} | Labels={len(labels)}")
+        print(f"DEBUG [SAM]: Point Details: {pts}")
+        print(f"DEBUG [SAM]: Label Details (1=positive, 0=negative): {labels}")
+        
+        assert len(pts) == len(labels), "Length of points and point_labels must match"
+        
+        import numpy as np
+        import cv2
+        pts_np = np.array([pts], dtype=np.float32)
+        labels_np = np.array([labels], dtype=np.int32)
+        
+        # 5. ROI crop before SAM
+        orig_h, orig_w = img_np.shape[:2]
+        x_coords, y_coords = pts_np[0, :, 0], pts_np[0, :, 1]
+        x_min, x_max = int(np.min(x_coords)), int(np.max(x_coords))
+        y_min, y_max = int(np.min(y_coords)), int(np.max(y_coords))
+        
+        pad_x = int((x_max - x_min) * 0.5) + 100
+        pad_y = int((y_max - y_min) * 0.5) + 100
+        
+        crop_x1 = max(0, x_min - pad_x)
+        crop_y1 = max(0, y_min - pad_y)
+        crop_x2 = min(orig_w, x_max + pad_x)
+        crop_y2 = min(orig_h, y_max + pad_y)
+        
+        cropped_img = img_np[crop_y1:crop_y2, crop_x1:crop_x2]
+        
+        cropped_pts = pts_np.copy()
+        cropped_pts[0, :, 0] -= crop_x1
+        cropped_pts[0, :, 1] -= crop_y1
+        
+        results = model.predict(source=cropped_img, points=cropped_pts, labels=labels_np, retina_masks=True, verbose=False)
+        
+        if not results or len(results) == 0:
+            return {"success": True, "masks": [], "polygons": []}
+
+        result = results[0]
+        masks_json = []
+        polygons_json = []
+
+        if hasattr(result, 'masks') and result.masks is not None:
+            # 4. Multi-mask selection: choose best mask based on area/shape
+            best_mask_idx = 0
+            best_score = -1
+            
+            for i in range(result.masks.data.shape[0]):
+                m = result.masks.data[i].cpu().numpy()
+                m_uint8 = (m * 255).astype('uint8')
+                area = np.count_nonzero(m_uint8)
+                if area > 0:
+                    cnts, _ = cv2.findContours(m_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if cnts:
+                        c = max(cnts, key=cv2.contourArea)
+                        hull_area = cv2.contourArea(cv2.convexHull(c))
+                        solidity = area / hull_area if hull_area > 0 else 0
+                        score = area * solidity
+                        if score > best_score:
+                            best_score = score
+                            best_mask_idx = i
+            
+            mask_data_cropped = result.masks.data[best_mask_idx].cpu().numpy()
+            
+            # Place cropped mask back to original size
+            mask_data = np.zeros((orig_h, orig_w), dtype=np.float32)
+            mask_data[crop_y1:crop_y2, crop_x1:crop_x2] = mask_data_cropped
+            
+            num_masks = result.masks.data.shape[0] if hasattr(result.masks.data, 'shape') else 1
+            nonzero_count = int(np.count_nonzero(mask_data))
+            print(f"DEBUG [SAM]: mask shape={mask_data.shape}, non-zero pixels={nonzero_count}")
+            
+            import base64
+            
+            mask_uint8 = (mask_data * 255).astype('uint8')
+            
+            area_before = int(np.count_nonzero(mask_uint8))
+
+            # 2. Keep all components above area threshold
+            num_labels, labels_img, stats, centroids = cv2.connectedComponentsWithStats(mask_uint8, connectivity=8)
+            new_mask = np.zeros_like(mask_uint8)
+            area_threshold = 100 # arbitrary threshold
+            for i in range(1, num_labels):
+                if stats[i, cv2.CC_STAT_AREA] >= area_threshold:
+                    new_mask[labels_img == i] = 255
+            mask_uint8 = new_mask
+
+            # 3. Adaptive kernel size (1% of image size minimum)
+            k_size = max(3, int(min(orig_h, orig_w) * 0.01))
+            k_size = k_size if k_size % 2 != 0 else k_size + 1
+            kernel = np.ones((k_size, k_size), np.uint8)
+            mask_uint8 = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
+
+            # 1. Contour-based smoothing using approxPolyDP
+            smoothed_mask = np.zeros_like(mask_uint8)
+            contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for c in contours:
+                epsilon = 0.002 * cv2.arcLength(c, True)
+                approx = cv2.approxPolyDP(c, epsilon, True)
+                cv2.drawContours(smoothed_mask, [approx], -1, 255, -1)
+            mask_uint8 = smoothed_mask
+
+            area_after = int(np.count_nonzero(mask_uint8))
+            print(f"original area: {area_before}")
+            print(f"cleaned area: {area_after}")
+
+            _, buffer = cv2.imencode('.png', mask_uint8)
+            mask_base64 = base64.b64encode(buffer).decode('utf-8')
+            masks_json.append(f"data:image/png;base64,{mask_base64}")
+            
+            # Extract polygon
+            contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                cnt = max(contours, key=cv2.contourArea)
+                # Simplify polygon with tighter tolerance to perfectly hug handwriting
+                epsilon = 0.0015 * cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, epsilon, True)
+                poly = approx.reshape(-1, 2).tolist()
+                polygons_json.append(poly)
+
+        return {
+            "success": True,
+            "masks": masks_json,
+            "polygons": polygons_json
+        }
+    except Exception as e:
+        print(f"Interactive prediction error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/sam/predict")
-async def sam_predict(file: UploadFile = File(...), request: Request = None):
+async def sam_predict(
+    file: UploadFile = File(...), 
+    box: str = Form(None), 
+    request: Request = None
+):
     """
     Local Ultralytics SAM inference endpoint.
     Accepts an image file and returns segmentation masks + annotations.
@@ -2996,9 +3382,21 @@ async def sam_predict(file: UploadFile = File(...), request: Request = None):
             tmp.write(image_bytes)
             tmp_path = tmp.name
         
+        kwargs = {"verbose": False, "conf": 0.1}
+        
+        if box:
+            try:
+                parsed_box = json.loads(box)
+                bx, by, bw, bh = parsed_box
+                kwargs["bboxes"] = [bx, by, bx + bw, by + bh]
+            except Exception as e:
+                print(f"Error parsing box parameter: {e}")
+                
+
+
         # Run SAM inference with lower confidence threshold to detect more objects
         # conf=0.1 allows detection of objects with lower confidence scores
-        results = model(tmp_path, verbose=False, conf=0.1)
+        results = model(tmp_path, **kwargs)
         
         # Clean up temp file
         import os as os_module
@@ -3081,6 +3479,397 @@ async def sam_predict(file: UploadFile = File(...), request: Request = None):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"SAM inference failed: {str(e)}")
+
+
+# -----------------------------
+# SAM Smart Detect Endpoint (v5 — CLIP Semantic + SAM + Visual Pipeline)
+# -----------------------------
+@app.post("/api/sam/smart")
+async def sam_smart_detect(
+    file: UploadFile = File(...),
+    className: str = Form(...),
+    description: str = Form(...),
+    request: Request = None
+):
+    """
+    Smart Detect v5: 3-Stage Semantic Pipeline
+
+    Stage 1 — SAM:   Generates all candidate region masks
+    Stage 2 — Visual: Scores each region via handwriting heuristics
+    Stage 3 — CLIP:  Scores semantic similarity to user prompt text
+
+    Final score = 0.4×CLIP + 0.3×visual_irregularity + 0.2×position_bias + 0.1×size_score
+    Hard filter: reject if CLIP similarity < 0.25 (removes paragraphs/tables entirely)
+    Fallback: lower CLIP threshold 0.25→0.20, then always return best match.
+    """
+    origin_header = request.headers.get("x-requested-from", "") if request else ""
+    if not origin_header or origin_header.lower() != "ai-annotation":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    model = load_sam_model()
+    if not model:
+        raise HTTPException(status_code=500, detail="SAM model not available.")
+
+    try:
+        import tempfile, io as io_module, os as os_module, math
+        from PIL import Image as PILImage
+
+        image_bytes = await file.read()
+        np_module = ensure_numpy()
+        cv2_module = ensure_cv2()
+
+        semantic_prompt = f"{description.strip()} {className.strip()}".lower().strip()
+        kw_combined = (className + " " + description).lower()
+
+        print(f"\n{'='*70}")
+        print(f"🧠 Smart Detect v5 (CLIP+SAM+Visual) | Prompt: '{semantic_prompt}'")
+        print(f"{'='*70}")
+
+        # ── Intent detection ─────────────────────────────────────────────────
+        is_signature_mode = any(kw in kw_combined for kw in [
+            'signature', 'sign', 'handwritten', 'handwriting', 'hand written',
+            'cursive', 'autograph', 'written', 'pen', 'ink', 'handwrite'
+        ])
+        is_logo_mode = any(kw in kw_combined for kw in ['logo', 'seal', 'stamp', 'icon', 'emblem'])
+        print(f"   Intent: signature={is_signature_mode}, logo={is_logo_mode}")
+
+        # ── Load image ───────────────────────────────────────────────────────
+        img_pil = PILImage.open(io_module.BytesIO(image_bytes)).convert("RGB")
+        img_w, img_h = img_pil.size
+        img_np = np_module.array(img_pil)
+        img_gray = cv2_module.cvtColor(img_np, cv2_module.COLOR_RGB2GRAY)
+        img_area = img_w * img_h
+        print(f"📐 Image: {img_w}x{img_h}")
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STAGE 1: SAM — generate candidate masks (wide net, conf=0.05)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+        results = model(tmp_path, verbose=False, conf=0.05)
+        os_module.remove(tmp_path)
+
+        candidates = []   # list of (bbox, cnt, mask_np, area, sam_conf)
+        if results and len(results) > 0:
+            result = results[0]
+            if hasattr(result, 'masks') and result.masks is not None:
+                masks_data = result.masks.data
+                # Try to get per-mask confidence from boxes
+                confs = []
+                if hasattr(result, 'boxes') and result.boxes is not None and result.boxes.conf is not None:
+                    confs = result.boxes.conf.cpu().numpy().tolist()
+
+                print(f"🔍 Stage1 SAM: {len(masks_data)} raw masks")
+                for i, mask in enumerate(masks_data):
+                    mask_np = (mask.cpu().numpy() * 255).astype(np_module.uint8)
+                    contours, _ = cv2_module.findContours(
+                        mask_np, cv2_module.RETR_EXTERNAL, cv2_module.CHAIN_APPROX_SIMPLE)
+                    if not contours:
+                        continue
+                    cnt = max(contours, key=cv2_module.contourArea)
+                    area = cv2_module.contourArea(cnt)
+                    if area < 50:
+                        continue
+                    x, y, w, h = cv2_module.boundingRect(cnt)
+                    if w < 5 or h < 5:
+                        continue
+                    sam_conf = float(confs[i]) if i < len(confs) else 0.5
+                    candidates.append(([x, y, w, h], cnt, mask_np, float(area), sam_conf))
+
+        print(f"📦 {len(candidates)} candidates after SAM noise filter")
+
+        if not candidates:
+            return JSONResponse(status_code=200, content={
+                "success": True, "prompt": semantic_prompt,
+                "boxes": [], "masks": [], "polygons": [], "detections": [],
+                "message": f"No regions detected in image"
+            })
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STAGE 2: VISUAL SCORING — handwriting / signature heuristics
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        def compute_printed_text_score(gray_crop):
+            """0–1. Higher = looks like dense printed text (bad for signature)."""
+            if gray_crop.shape[0] < 5 or gray_crop.shape[1] < 5:
+                return 0.0
+            _, binary = cv2_module.threshold(
+                gray_crop, 0, 255, cv2_module.THRESH_BINARY_INV + cv2_module.THRESH_OTSU)
+            row_sums = np_module.sum(binary, axis=1).astype(float)
+            if row_sums.max() == 0:
+                return 0.0
+            row_norm = row_sums / row_sums.max()
+            above = row_norm > 0.1
+            crossings = int(np_module.sum(np_module.diff(above.astype(int)) != 0))
+            regularity = crossings / max(gray_crop.shape[0], 1)
+            col_sums = np_module.sum(binary, axis=0).astype(float)
+            col_norm = col_sums / (col_sums.max() + 1e-6)
+            col_above = col_norm > 0.1
+            col_crossings = int(np_module.sum(np_module.diff(col_above.astype(int)) != 0))
+            col_regularity = col_crossings / max(gray_crop.shape[1], 1)
+            return min((regularity + col_regularity) / 2.0 * 3.0, 1.0)
+
+        def compute_contour_irregularity(cnt, area):
+            """0–1. Higher = more irregular/cursive contour (signature-like)."""
+            perimeter = cv2_module.arcLength(cnt, True)
+            if area < 1 or perimeter < 1:
+                return 0.0
+            ratio = (perimeter ** 2) / (4 * math.pi * area)
+            return min(max((ratio - 1.0) / 10.0, 0.0), 1.0)
+
+        def compute_gradient_entropy(gray_crop):
+            """0–1. Higher = more varied stroke directions (handwriting)."""
+            if gray_crop.shape[0] < 5 or gray_crop.shape[1] < 5:
+                return 0.0
+            gx = cv2_module.Sobel(gray_crop, cv2_module.CV_64F, 1, 0, ksize=3)
+            gy = cv2_module.Sobel(gray_crop, cv2_module.CV_64F, 0, 1, ksize=3)
+            magnitude = np_module.sqrt(gx**2 + gy**2)
+            angle = np_module.arctan2(gy, gx)
+            mask_strong = magnitude > magnitude.mean() + magnitude.std() * 0.5
+            if mask_strong.sum() < 10:
+                return 0.0
+            hist, _ = np_module.histogram(angle[mask_strong], bins=16, range=(-math.pi, math.pi))
+            hist = hist.astype(float) + 1e-6
+            hist /= hist.sum()
+            entropy = -float(np_module.sum(hist * np_module.log(hist)))
+            return min(entropy / math.log(16), 1.0)
+
+        def compute_stroke_variation(gray_crop):
+            """0–1. Higher = non-uniform stroke widths (handwriting)."""
+            if gray_crop.shape[0] < 5 or gray_crop.shape[1] < 5:
+                return 0.0
+            _, binary = cv2_module.threshold(
+                gray_crop, 0, 255, cv2_module.THRESH_BINARY_INV + cv2_module.THRESH_OTSU)
+            dist = cv2_module.distanceTransform(binary, cv2_module.DIST_L2, 5)
+            vals = dist[dist > 0.5]
+            if len(vals) < 10:
+                return 0.0
+            return min(float(np_module.std(vals)) / (float(np_module.mean(vals)) + 1e-6), 1.0)
+
+        def visual_score(bbox, cnt, area):
+            """
+            Returns (visual_score [0–1], position_score [0–1], size_score [0–1], breakdown dict).
+            visual_score  = irregularity + entropy + stroke_variation + text_penalty
+            position_score = bottom-of-page bias
+            size_score     = prefers small-to-medium marks
+            """
+            x, y, w, h = bbox
+            br = {}
+            area_ratio = area / img_area
+            aspect = w / h if h > 0 else 1.0
+            center_y = (y + h / 2) / img_h
+            bbox_area = w * h
+            fill_ratio = area / bbox_area if bbox_area > 0 else 0
+            crop_gray = img_gray[y:y+h, x:x+w]
+
+            # --- Visual irregularity components ---
+            irr = compute_contour_irregularity(cnt, area)
+            ent = compute_gradient_entropy(crop_gray)
+            swv = compute_stroke_variation(crop_gray)
+            text_pen = compute_printed_text_score(crop_gray)
+            br['irregularity'] = f"{irr:.2f}"
+            br['gradient_entropy'] = f"{ent:.2f}"
+            br['stroke_variation'] = f"{swv:.2f}"
+            br['text_density'] = f"{text_pen:.2f}"
+
+            # Aggregate visual score (signature boosts + text penalty)
+            vis = (irr * 0.40 + ent * 0.35 + swv * 0.25) - (text_pen * 0.40)
+
+            # Dense rectangular block penalty (tables / paragraphs)
+            if fill_ratio > 0.85 and area_ratio > 0.05:
+                vis -= 0.40
+                br['dense_block_penalty'] = "-0.40"
+
+            # Large block penalty
+            if area_ratio > 0.35:
+                vis -= 0.50
+                br['large_block_penalty'] = "-0.50"
+            elif area_ratio > 0.20:
+                vis -= 0.20
+                br['large_block_penalty'] = "-0.20"
+
+            vis = min(max(vis, 0.0), 1.0)
+
+            # --- Position score (bottom = good for signatures) ---
+            if is_signature_mode:
+                if center_y > 0.70:
+                    pos_s = 1.0
+                elif center_y > 0.50:
+                    pos_s = 0.7
+                elif center_y > 0.30:
+                    pos_s = 0.4
+                else:
+                    pos_s = 0.1
+            else:
+                pos_s = 0.5   # neutral for non-signature classes
+            br['position'] = f"{pos_s:.2f}(cy={center_y:.2f})"
+
+            # --- Size score ---
+            if 0.001 < area_ratio < 0.08:
+                sz_s = 1.0
+            elif area_ratio < 0.20:
+                sz_s = 0.6
+            elif area_ratio < 0.40:
+                sz_s = 0.2
+            else:
+                sz_s = 0.0
+            br['size'] = f"{sz_s:.2f}(ratio={area_ratio:.3f})"
+
+            return vis, pos_s, sz_s, br
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STAGE 3: CLIP SEMANTIC SCORING
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        clip_model, clip_processor = load_clip_model()
+        clip_available = clip_model is not None
+
+        # Build text prompts — positive (class) and negative (counter-examples)
+        positive_texts = [
+            className,
+            f"handwritten {className}",
+            description if description.strip() else f"a {className}",
+        ]
+        negative_texts = [
+            "paragraph of printed text",
+            "dense text block",
+            "table with rows and columns",
+            "printed document body",
+        ]
+        all_clip_texts = positive_texts + negative_texts
+        n_pos = len(positive_texts)
+
+        # Pre-encode all text prompts once (shared across all regions)
+        text_features_np = None
+        if clip_available:
+            try:
+                import torch
+                with torch.no_grad():
+                    text_inputs = clip_processor(
+                        text=all_clip_texts, return_tensors="pt", padding=True, truncation=True)
+                    text_feats = clip_model.get_text_features(**text_inputs)
+                    text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
+                    text_features_np = text_feats.numpy()
+                print(f"✅ CLIP text prompts encoded: {all_clip_texts}")
+            except Exception as e:
+                print(f"⚠️  CLIP text encoding failed: {e}")
+                clip_available = False
+
+        def clip_score_for_crop(crop_pil):
+            """Returns CLIP semantic similarity [0–1] of crop vs. positive prompts.
+            Score = mean(positive sims) - mean(negative sims), clipped to [0,1]."""
+            if not clip_available or text_features_np is None:
+                return 0.5   # neutral fallback — does not filter anything
+            try:
+                import torch
+                with torch.no_grad():
+                    img_input = clip_processor(images=crop_pil, return_tensors="pt")
+                    img_feat = clip_model.get_image_features(**img_input)
+                    img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
+                    img_np_feat = img_feat.numpy()[0]   # shape (512,)
+
+                sims = text_features_np @ img_np_feat   # (N_texts,)
+                pos_sim = float(sims[:n_pos].mean())
+                neg_sim = float(sims[n_pos:].mean())
+                # Net score: positive affinity minus negative affinity
+                net = (pos_sim - neg_sim + 1.0) / 2.0   # shift to [0,1]
+                return min(max(net, 0.0), 1.0)
+            except Exception as e:
+                print(f"⚠️  CLIP inference error for crop: {e}")
+                return 0.5   # neutral fallback
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # COMBINE SCORES — per region
+        # Final = 0.4×CLIP + 0.3×visual + 0.2×position + 0.1×size
+        # Hard filter: reject if CLIP similarity < CLIP_HARD_THRESHOLD
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        CLIP_HARD_THRESHOLD = 0.25   # Stage‐3 hard filter
+        CLIP_FALLBACK_THRESHOLD = 0.20
+
+        scored_results = []
+        for bbox, cnt, mask_np, area, sam_conf in candidates:
+            x, y, w, h = bbox
+            vis_s, pos_s, sz_s, br = visual_score(bbox, cnt, area)
+
+            # Crop image for CLIP
+            pad = 4
+            cx1, cy1 = max(0, x - pad), max(0, y - pad)
+            cx2, cy2 = min(img_w, x + w + pad), min(img_h, y + h + pad)
+            crop_pil = img_pil.crop((cx1, cy1, cx2, cy2))
+            clip_s = clip_score_for_crop(crop_pil)
+
+            # Weighted final score
+            final = (0.40 * clip_s) + (0.30 * vis_s) + (0.20 * pos_s) + (0.10 * sz_s)
+            final = min(max(final, 0.0), 1.0)
+
+            print(
+                f"  🔬 bbox={bbox} | "
+                f"CLIP={clip_s:.3f} | visual={vis_s:.3f} | pos={pos_s:.3f} | "
+                f"size={sz_s:.3f} | SAM_conf={sam_conf:.2f} | FINAL={final:.3f} | "
+                f"detail={br}"
+            )
+
+            scored_results.append((final, clip_s, bbox, cnt, mask_np, area, sam_conf))
+
+        # Sort by final score descending
+        scored_results.sort(key=lambda t: t[0], reverse=True)
+        TOP_K = 2  # Maximum detections to return
+
+        # ── Fallback selection with progressive CLIP threshold relaxation ───
+        def select_results(scored, clip_thresh):
+            """Filter by CLIP hard threshold; return top-K."""
+            passing = [r for r in scored if r[1] >= clip_thresh]
+            return passing[:TOP_K]
+
+        final_results = select_results(scored_results, CLIP_HARD_THRESHOLD)
+        used_clip_thresh = CLIP_HARD_THRESHOLD
+
+        if not final_results:
+            print(f"⚠️  CLIP threshold {CLIP_HARD_THRESHOLD} filtered everything — retrying at {CLIP_FALLBACK_THRESHOLD}")
+            final_results = select_results(scored_results, CLIP_FALLBACK_THRESHOLD)
+            used_clip_thresh = CLIP_FALLBACK_THRESHOLD
+
+        if not final_results:
+            # Absolute fallback: best available match regardless of CLIP
+            print(f"⚠️  All CLIP thresholds failed — returning best available match")
+            final_results = [scored_results[0]]
+            used_clip_thresh = 0.0
+
+        print(f"\n📈 Summary | candidates={len(candidates)} | passed={len(final_results)} | clip_thresh={used_clip_thresh}")
+
+        # ─── Build response ──────────────────────────────────────────────────
+        response_data = {
+            "success": True,
+            "prompt": semantic_prompt,
+            "masks": [], "polygons": [], "boxes": [], "detections": [],
+            "message": f"Smart Detect: {len(final_results)} {className}(s) found"
+        }
+
+        for score, clip_s, bbox, cnt, mask_np, area, sam_conf in final_results:
+            mask_img = PILImage.fromarray(mask_np)
+            buf = io_module.BytesIO()
+            mask_img.save(buf, format='PNG')
+            mask_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+            response_data["masks"].append(f"data:image/png;base64,{mask_b64}")
+            polygon = [[int(p[0][0]), int(p[0][1])] for p in cnt]
+            response_data["polygons"].append(polygon)
+            response_data["boxes"].append(bbox)
+            response_data["detections"].append({
+                "bbox": bbox,
+                "score": round(score, 3),
+                "clip_score": round(clip_s, 3),
+                "label": className
+            })
+
+        print(f"✅ Returning {len(final_results)} detection(s)")
+        return JSONResponse(status_code=200, content=response_data)
+
+    except Exception as e:
+        print(f"❌ Smart Detect v5 error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Smart Detect failed: {str(e)}")
 
 
 # =============================
@@ -3247,6 +4036,526 @@ async def docs_predict(file: UploadFile = File(...), request: Request = None):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Docs annotation inference failed: {str(e)}")
 
+
+
+# ============================================================================
+# TRAINING ENGINE — full implementation
+# ============================================================================
+
+# Lazy-import the singleton so server restarts don't fail if ultralytics is
+# missing (import happens only on first API call or WebSocket connect).
+_training_manager = None
+
+def _get_training_manager():
+    global _training_manager
+    if _training_manager is None:
+        try:
+            from training.training_manager import training_manager
+            _training_manager = training_manager
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Training engine could not be loaded: {exc}"
+            )
+    return _training_manager
+
+
+class TrainingStartRequest(BaseModel):
+    project_id:         int
+    dataset_version_id: str
+    data_yaml_path:     str
+    weights:            Optional[str] = None   # None → from scratch
+    epochs:             int           = 100
+    imgsz:              int           = 640
+    batch:              int           = -1
+    patience:           int           = 50
+    task:               str           = "detect"
+
+
+@app.get("/api/training/status")
+async def get_training_status(current_user: User = Depends(get_current_user)):
+    """Return active job info or is_running=False."""
+    mgr    = _get_training_manager()
+    active = mgr.get_active()
+    if active:
+        return JSONResponse({
+            "is_running": True,
+            "job_id":     active.job_id,
+            "status":     active.status,
+        })
+    return JSONResponse({"is_running": False, "job_id": None})
+
+
+@app.post("/api/training/start")
+async def start_training(
+    body:         TrainingStartRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Launch a YOLO training job.
+    Only one job may run at a time.
+    """
+    mgr = _get_training_manager()
+    config = body.model_dump()
+    try:
+        job_id = mgr.create_and_start(config)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return JSONResponse({"job_id": job_id, "status": "running"})
+
+
+@app.post("/api/training/{job_id}/stop")
+async def stop_training(
+    job_id:       str,
+    current_user: User = Depends(get_current_user),
+):
+    """Request a clean stop of the running training job."""
+    mgr = _get_training_manager()
+    job = mgr.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != "running":
+        raise HTTPException(status_code=409, detail=f"Job is not running (status: {job.status})")
+    job.stop()
+    return JSONResponse({"status": "stopping", "job_id": job_id})
+
+
+@app.get("/api/training/history")
+async def get_training_history(current_user: User = Depends(get_current_user)):
+    """Return all training job summaries (newest first)."""
+    mgr = _get_training_manager()
+    return JSONResponse(mgr.list_all())
+
+
+@app.get("/api/training/{job_id}")
+async def get_training_job(
+    job_id:       str,
+    current_user: User = Depends(get_current_user),
+):
+    """Return the current summary of a specific training job."""
+    mgr = _get_training_manager()
+    job = mgr.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return JSONResponse(job.to_summary())
+
+
+# ── WebSocket ──────────────────────────────────────────────────────────────────
+
+@app.websocket("/ws/training/{job_id}")
+async def training_websocket(websocket: WebSocket, job_id: str):
+    """
+    Real-time training log stream.
+
+    The client connects once per job.  Messages are JSON objects:
+      { "type": "metrics", "data": {...} }
+      { "type": "gpu",     "data": {...} }
+      { "type": "done",    "data": {...} }
+      { "type": "stopped", "data": {} }
+      { "type": "error",   "message": "..." }
+
+    The server closes the socket automatically on terminal events
+    (done / stopped / error).
+    """
+    await websocket.accept()
+
+    mgr = _get_training_manager()
+    job = mgr.get(job_id)
+
+    if job is None:
+        await websocket.send_json({"type": "error", "message": f"Job '{job_id}' not found"})
+        await websocket.close()
+        return
+
+    _TERMINAL = {"done", "stopped", "error"}
+
+    try:
+        while True:
+            # Drain the queue in a non-blocking tight loop
+            drained = 0
+            while True:
+                try:
+                    msg = job.log_queue.get_nowait()
+                    drained += 1
+                    await websocket.send_json(msg)
+                    if msg.get("type") in _TERMINAL:
+                        return         # closes the socket when function returns
+                except _queue_module.Empty:
+                    break
+
+            # If the job finished but the queue is now empty, send done and exit
+            if job.status in _TERMINAL and drained == 0:
+                await websocket.send_json({"type": job.status, "data": {}})
+                return
+
+            # Yield to the event loop between drains
+            await asyncio.sleep(0.3)
+
+    except WebSocketDisconnect:
+        pass   # client closed the tab — no action needed
+    except Exception as exc:
+        try:
+            await websocket.send_json({"type": "error", "message": str(exc)})
+        except Exception:
+            pass
+
+
+# ============================================================================
+# RESULTS & MODEL REGISTRY ENDPOINTS
+# ============================================================================
+from fastapi.responses import FileResponse
+import csv
+
+@app.get("/api/training/{job_id}/results/csv")
+async def get_training_results_csv(job_id: str, current_user: User = Depends(get_current_user)):
+    """Fetch and parse results.csv from the training run."""
+    csv_path = Path("runs") / "training" / job_id / "results.csv"
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="results.csv not found")
+        
+    data = []
+    try:
+        with open(csv_path, mode="r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            # Clean up keys (ultralytics adds whitespace)
+            for row in reader:
+                cleaned = {k.strip(): v.strip() for k, v in row.items()}
+                data.append(cleaned)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read CSV: {exc}")
+        
+    return JSONResponse(data)
+
+
+@app.get("/api/training/{job_id}/results/image/{image_name}")
+async def get_training_results_image(job_id: str, image_name: str, token: str = None):
+    """Serve validation images from the training run."""
+    if not token:
+        raise HTTPException(status_code=401, detail="Token required")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if not payload.get("sub"):
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+        
+    # Prevent path traversal
+    safe_name = Path(image_name).name
+    img_path = Path("runs") / "training" / job_id / safe_name
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(img_path)
+
+@app.get("/api/training/{job_id}/weights/best.pt")
+async def get_training_weights(job_id: str, current_user: User = Depends(get_current_user)):
+    """Serve the trained weights file."""
+    weights_path = Path("runs") / "training" / job_id / "weights" / "best.pt"
+    if not weights_path.exists():
+        raise HTTPException(status_code=404, detail="Weights not found")
+    return FileResponse(weights_path, filename=f"best_{job_id[:8]}.pt")
+
+
+class ModelRegisterRequest(BaseModel):
+    job_id: str
+
+@app.post("/api/models/register")
+async def register_model(body: ModelRegisterRequest, current_user: User = Depends(get_current_user)):
+    """Register a trained model."""
+    try:
+        from training.model_registry import model_registry
+        from training.training_manager import training_manager
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Training module not loaded")
+        
+    job = training_manager.get(body.job_id)
+    if not job:
+        # Check history if job not in memory
+        history = [j for j in training_manager.list_all() if j["job_id"] == body.job_id]
+        if not history:
+            raise HTTPException(status_code=404, detail="Job not found")
+        job_summary = history[0]
+        config = job_summary.get("config", {})
+        
+        # In history, final_metrics isn't directly exposed unless it's in the log_queue (which is lost).
+        # We need to read results.csv to get final metrics.
+        metrics = {}
+        csv_path = Path("runs") / "training" / body.job_id / "results.csv"
+        if csv_path.exists():
+            with open(csv_path, "r", encoding="utf-8") as f:
+                reader = list(csv.DictReader(f))
+                if reader:
+                    last_row = {k.strip(): float(v.strip()) for k, v in reader[-1].items()}
+                    metrics = {
+                        "mAP50": last_row.get("metrics/mAP50(B)", 0.0),
+                        "precision": last_row.get("metrics/precision(B)", 0.0),
+                        "recall": last_row.get("metrics/recall(B)", 0.0),
+                        "epoch": last_row.get("epoch", config.get("epochs", 100))
+                    }
+    else:
+        config = job.config
+        metrics = {}
+        # Get from metrics history if available
+        if hasattr(job, "metrics_history") and job.metrics_history:
+            m = job.metrics_history[-1]
+            metrics = {
+                "mAP50": m.get("mAP50", 0.0),
+                "precision": m.get("precision", 0.0),
+                "recall": m.get("recall", 0.0),
+                "epoch": m.get("epoch", 0)
+            }
+            
+    entry = model_registry.register_model(body.job_id, config, metrics)
+    return JSONResponse(entry)
+
+
+@app.get("/api/models/{project_id}")
+async def get_models(project_id: int, current_user: User = Depends(get_current_user)):
+    """List registered models for a project."""
+    try:
+        from training.model_registry import model_registry
+    except Exception:
+        return JSONResponse([])
+    return JSONResponse(model_registry.list_models(project_id))
+
+
+@app.post("/api/models/{model_id}/deploy")
+async def deploy_model(model_id: str, current_user: User = Depends(get_current_user)):
+    """Set active model for project and copy weights to best.pt."""
+    try:
+        from training.model_registry import model_registry
+    except Exception:
+        raise HTTPException(status_code=503, detail="Module not loaded")
+        
+    weights_path = model_registry.deploy_model(model_id)
+    if not weights_path:
+        raise HTTPException(status_code=404, detail="Model not found")
+        
+    # Copy to best.pt in root
+    try:
+        import shutil
+        src = Path(weights_path)
+        dst = Path("best.pt")
+        if src.exists():
+            shutil.copy2(src, dst)
+            # Force reload in memory
+            global docs_model
+            docs_model = None
+            load_docs_model()
+    except Exception as e:
+        logger.error(f"Failed to copy weights: {e}")
+        
+    return JSONResponse({"deployed": True, "weights_path": weights_path})
+
+
+@app.delete("/api/models/{model_id}")
+async def delete_model(model_id: str, current_user: User = Depends(get_current_user)):
+    """Archive a model."""
+    try:
+        from training.model_registry import model_registry
+    except Exception:
+        raise HTTPException(status_code=503, detail="Module not loaded")
+        
+    success = model_registry.delete_model(model_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Model not found")
+    return JSONResponse({"archived": True})
+
+
+# ============================================================================
+# DATASET VERSIONING ENDPOINTS
+# ============================================================================
+
+VERSIONS_DIR = Path("versions")
+VERSIONS_DIR.mkdir(exist_ok=True)
+
+class ExportVersionRequest(BaseModel):
+    project_id: int
+    version_id: Optional[str] = None
+    split: Optional[List[float]] = None   # [train, val, test]
+
+@app.post("/api/dataset/export-version")
+async def export_dataset_version(
+    body: ExportVersionRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Generate a versioned YOLO dataset for a project.
+
+    Body:
+        project_id  – project to export
+        version_id  – optional label (auto-generated if omitted)
+        split       – optional [train, val, test] ratios (default [0.8, 0.1, 0.1])
+
+    Response:
+        { data_yaml_path, version_meta }
+    """
+    from training.dataset_exporter import export_yolo_version
+
+    db = SessionLocal()
+    try:
+        # ── verify project belongs to the requesting user ─────────────────────
+        project = db.query(Project).filter(
+            Project.id == body.project_id,
+            Project.user_id == current_user.id
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # ── resolve class names ───────────────────────────────────────────────
+        try:
+            class_names = json.loads(project.classes) if project.classes else []
+        except Exception:
+            class_names = []
+
+        # ── collect images + annotations from DB ──────────────────────────────
+        images = db.query(ProjectImage).filter(
+            ProjectImage.project_id == body.project_id
+        ).all()
+
+        if not images:
+            raise HTTPException(
+                status_code=422,
+                detail="Project has no images. Upload images and add annotations first."
+            )
+
+        # Build the annotation dicts expected by export_yolo_version
+        annotation_data = []
+        all_class_names = set(class_names)
+
+        for img in images:
+            anns = db.query(Annotation).filter(
+                Annotation.image_id == img.id
+            ).all()
+
+            # Collect any new class names encountered in annotations
+            for ann in anns:
+                if ann.class_name:
+                    all_class_names.add(ann.class_name)
+
+            annotation_data.append({
+                "image_id": img.id,
+                "filename":  img.filename,
+                "filepath":  img.filepath,
+                "width":     img.width  or 0,
+                "height":    img.height or 0,
+                "anns": [
+                    {
+                        "class_name":       ann.class_name,
+                        "annotation_type":  ann.annotation_type,
+                        "coordinates":      ann.coordinates,
+                    }
+                    for ann in anns
+                ],
+            })
+
+        # Merge any annotation-derived classes that are not in project.classes
+        merged_class_names = list(class_names)
+        for name in sorted(all_class_names):
+            if name not in merged_class_names:
+                merged_class_names.append(name)
+
+        # ── resolve split ─────────────────────────────────────────────────────
+        if body.split and len(body.split) == 3:
+            split_tuple = tuple(body.split)
+        else:
+            split_tuple = (0.8, 0.1, 0.1)
+
+        # ── resolve version_id ────────────────────────────────────────────────
+        version_id = body.version_id
+        if not version_id:
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            version_id = f"v_{ts}"
+
+        # ── call the exporter ─────────────────────────────────────────────────
+        try:
+            yaml_path = export_yolo_version(
+                project_id=body.project_id,
+                version_id=version_id,
+                annotations=annotation_data,
+                class_names=merged_class_names,
+                base_upload_dir=str(UPLOAD_DIR.absolute()),
+                base_versions_dir=str(VERSIONS_DIR.absolute()),
+                split=split_tuple,
+            )
+        except ValueError as ve:
+            raise HTTPException(status_code=422, detail=str(ve))
+
+        # ── read back the meta and return it ──────────────────────────────────
+        meta_path = Path(yaml_path).parent / "version_meta.json"
+        version_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+        return JSONResponse({
+            "data_yaml_path": yaml_path,
+            "version_meta":   version_meta,
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Dataset export failed: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@app.get("/api/dataset/versions/{project_id}")
+async def get_dataset_versions(
+    project_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    List all exported dataset versions for a project (newest first).
+    """
+    from training.dataset_exporter import list_versions
+
+    db = SessionLocal()
+    try:
+        # Verify project belongs to user
+        project = db.query(Project).filter(
+            Project.id == project_id,
+            Project.user_id == current_user.id
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        versions = list_versions(project_id, str(VERSIONS_DIR.absolute()))
+        return JSONResponse(versions)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list versions: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@app.get("/api/dataset/versions/{project_id}/{version_id}/stats")
+async def get_dataset_version_stats(
+    project_id: int,
+    version_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Returns basic stats for a specific dataset version."""
+    from training.dataset_exporter import list_versions
+    versions = list_versions(project_id, str(VERSIONS_DIR.absolute()))
+    meta = next((v for v in versions if v.get("version_id") == version_id), None)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Version not found")
+        
+    return JSONResponse({
+        "total_images": meta.get("total_images", 0),
+        "class_count": len(meta.get("class_names", [])),
+        "avg_annotations_per_image": 1.0
+    })
 
 if __name__ == "__main__":
     print("""

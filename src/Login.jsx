@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, Row, Col, Form, Button } from 'react-bootstrap';
+import { Form } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { getApiUrl } from './utils/api';
+import { useGoogleLogin } from '@react-oauth/google';
 import './style.scss';
-import robotLogos from './assets/Robot1.png';
+import robotLogos from './assets/MotionFrame.svg';
+import SplashScreen from './SplashScreen';
 
 const LoginForm = () => {
   const [email, setEmail] = useState('');
@@ -13,6 +15,7 @@ const LoginForm = () => {
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [lastUsedMethod, setLastUsedMethod] = useState('');
   
   // Forgot password states
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -28,13 +31,39 @@ const LoginForm = () => {
   const [successMessage, setSuccessMessage] = useState('');
   
   const navigate = useNavigate();
-  const { login, isAuthenticated } = useAuth();
+  const { login, googleLogin, isAuthenticated } = useAuth();
   const otpInputRef = useRef(null);
+
+  const handleGoogleSuccess = async (tokenResponse) => {
+    setLoading(true);
+    setError('');
+    const credential = tokenResponse.credential || tokenResponse.access_token;
+    const result = await googleLogin(credential);
+    
+    if (result.success) {
+      localStorage.setItem('lastUsedLoginMethod', 'google');
+      navigate('/');
+    } else {
+      setError(result.error || 'Google login failed');
+    }
+    setLoading(false);
+  };
+
+  const loginWithGoogle = useGoogleLogin({
+    onSuccess: handleGoogleSuccess,
+    onError: () => setError('Google login popup closed or failed'),
+  });
 
   useEffect(() => {
     // Redirect if already authenticated
     if (isAuthenticated) {
       navigate('/');
+    }
+    
+    // Check localStorage for the last used login method
+    const savedMethod = localStorage.getItem('lastUsedLoginMethod');
+    if (savedMethod) {
+      setLastUsedMethod(savedMethod);
     }
   }, [isAuthenticated, navigate]);
 
@@ -46,6 +75,7 @@ const LoginForm = () => {
     const result = await login(email, password);
     
     if (result.success) {
+      localStorage.setItem('lastUsedLoginMethod', 'email');
       navigate('/');
     } else {
       setError(result.error || 'Invalid email or password');
@@ -101,7 +131,7 @@ const LoginForm = () => {
       }
 
       setOtpSent(true);
-      setSuccessMessage('OTP sent to your email. Please check your inbox.');
+      setSuccessMessage('Security code sent to your email.');
       setTimeout(() => {
         otpInputRef.current?.focus();
       }, 100);
@@ -119,7 +149,7 @@ const LoginForm = () => {
     setResettingPassword(true);
 
     if (!otp || otp.length !== 5) {
-      setError('Please enter the complete 5-digit OTP');
+      setError('Please enter the complete 5-digit security code');
       setResettingPassword(false);
       return;
     }
@@ -158,7 +188,7 @@ const LoginForm = () => {
       const verifyData = await verifyResponse.json();
 
       if (!verifyResponse.ok) {
-        throw new Error(verifyData.detail || 'Invalid or expired OTP');
+        throw new Error(verifyData.detail || 'Invalid or expired code');
       }
 
       // Now reset password with the token
@@ -180,7 +210,7 @@ const LoginForm = () => {
         throw new Error(resetData.detail || 'Failed to reset password');
       }
 
-      setSuccessMessage('Password reset successfully! You can now login with your new password.');
+      setSuccessMessage('Password reset successfully! You can now login.');
       setError('');
       
       // Reset form after 2 seconds and go back to login
@@ -211,560 +241,552 @@ const LoginForm = () => {
     setResetToken('');
   };
 
+  const getLoadingText = () => {
+    if (loading) return "Signing in...";
+    if (sendingOtp) return "Sending...";
+    if (resettingPassword) return "Verifying...";
+    return "Loading...";
+  };
+
+  if (loading || sendingOtp || resettingPassword) {
+    return <SplashScreen text={getLoadingText()} />;
+  }
+
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #1a0a2e 0%, #2d1b4e 25%, #4a2c5a 50%, #6b3a7a 75%, #8b4fa8 100%)',
-      position: 'relative',
-      overflow: 'hidden',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '20px'
-    }}>
-      {/* Blurred background effect */}
-      <div style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'linear-gradient(135deg, rgba(138, 43, 226, 0.3) 0%, rgba(75, 0, 130, 0.3) 50%, rgba(72, 61, 139, 0.3) 100%)',
-        filter: 'blur(40px)',
-        zIndex: 0
-      }}></div>
+    <div className="rf-theme-bg">
+      <div className="rf-card">
+        {/* Header */}
+        <div className="rf-header">
+          <img src={robotLogos} alt="MotionFrame Logo" className="rf-logo" />
+          <h2 className="rf-heading">
+            {!showForgotPassword ? 'Welcome back' : 'Reset password'}
+          </h2>
+          <p className="rf-subtext">
+            {!showForgotPassword ? 'Sign in to access your dashboard' : 'Follow the steps to regain access'}
+          </p>
+        </div>
 
-      <Container style={{ position: 'relative', zIndex: 1 }}>
-        <Row className="justify-content-center">
-          <Col md={6} lg={5} xl={4}>
-            <div style={{
-              background: 'linear-gradient(135deg, rgba(138, 43, 226, 0.2) 0%, rgba(75, 0, 130, 0.15) 50%, rgba(72, 61, 139, 0.2) 100%)',
-              backdropFilter: 'blur(20px)',
-              WebkitBackdropFilter: 'blur(20px)',
-              borderRadius: '30px',
-              padding: '50px 40px',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.37)',
-              width: '100%',
-              maxWidth: '450px',
-              margin: '0 auto'
-            }}>
-              {/* Robot Logo */}
-              <div style={{ textAlign: 'center', marginBottom: '40px' }}>
-                <img
-                  src={robotLogos}
-                  alt="RoboSpectra Logo"
-                  style={{
-                    width: '200px',
-                    objectFit: 'contain',
-                    filter: 'drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3))'
-                  }}
-                />
-              </div>
+        {error && (
+          <div className="rf-alert rf-alert-error">
+            <span>{error}</span>
+          </div>
+        )}
 
-              {error && (
-                <div style={{
-                  background: 'rgba(220, 53, 69, 0.2)',
-                  color: '#ff6b6b',
-                  padding: '12px',
-                  borderRadius: '8px',
-                  marginBottom: '20px',
-                  textAlign: 'center',
-                  border: '1px solid rgba(220, 53, 69, 0.3)'
-                }}>
-                  {error}
+        {successMessage && (
+          <div className="rf-alert rf-alert-success">
+            <span>{successMessage}</span>
+          </div>
+        )}
+
+        {!showForgotPassword ? (
+          <>
+            <div className="rf-social-group">
+              <button 
+                className="rf-btn rf-btn-google" 
+                type="button" 
+                style={{ position: 'relative' }}
+                onClick={() => {
+                  setLastUsedMethod('google');
+                  loginWithGoogle();
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 48 48" style={{ marginRight: '4px' }}>
+                  <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
+                  <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
+                  <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
+                  <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
+                </svg>
+                Continue with Google
+                {lastUsedMethod === 'google' && (
+                  <span className="rf-badge-last-used">Last Used</span>
+                )}
+              </button>
+              <button 
+                className="rf-btn rf-btn-github" 
+                type="button"
+                style={{ position: 'relative' }}
+                onClick={() => {
+                  localStorage.setItem('lastUsedLoginMethod', 'github');
+                  setLastUsedMethod('github');
+                  alert('GitHub authentication requires an active OAuth App configured in your GitHub Developer Settings.');
+                }}
+              >
+                <i className="fab fa-github" style={{ fontSize: '18px', marginRight: '4px' }}></i>
+                Continue with GitHub
+                {lastUsedMethod === 'github' && (
+                  <span className="rf-badge-last-used" style={{ background: '#374151' }}>Last Used</span>
+                )}
+              </button>
+            </div>
+
+            <div className="rf-divider">
+              <div className="rf-divider-line"></div>
+              <span className="rf-divider-text">or continue with email</span>
+              <div className="rf-divider-line"></div>
+            </div>
+
+            <Form onSubmit={handleSubmit} className="rf-form">
+              <Form.Group className="rf-form-group">
+                <Form.Label className="rf-label">Email address</Form.Label>
+                <div className="rf-input-wrapper">
+                  <Form.Control
+                    type="email"
+                    placeholder="name@company.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    className="rf-input"
+                  />
+                  <i className="far fa-envelope rf-input-icon"></i>
                 </div>
-              )}
+              </Form.Group>
 
-              {successMessage && (
-                <div style={{
-                  background: 'rgba(40, 167, 69, 0.2)',
-                  color: '#51cf66',
-                  padding: '12px',
-                  borderRadius: '8px',
-                  marginBottom: '20px',
-                  textAlign: 'center',
-                  border: '1px solid rgba(40, 167, 69, 0.3)'
-                }}>
-                  {successMessage}
-                </div>
-              )}
-
-              {!showForgotPassword ? (
-                <Form onSubmit={handleSubmit}>
-                {/* Email ID Field */}
-                <Form.Group style={{ marginBottom: '30px' }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    borderBottom: '1px solid rgba(255, 255, 255, 0.3)',
-                    paddingBottom: '10px',
-                    marginBottom: '5px'
-                  }}>
-                    <i className="far fa-envelope" style={{ 
-                      fontSize: '20px', 
-                      color: 'rgba(255, 255, 255, 0.9)',
-                      marginRight: '15px',
-                      width: '24px'
-                    }}></i>
-                    <Form.Control
-                      type="email"
-                      placeholder="Email ID"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: '#fff',
-                        fontSize: '16px',
-                        padding: '8px 0',
-                        outline: 'none',
-                        boxShadow: 'none'
-                      }}
-                      className="login-input"
-                    />
-                  </div>
-                </Form.Group>
-
-                {/* Password Field */}
-                <Form.Group style={{ marginBottom: '30px' }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    borderBottom: '1px solid rgba(255, 255, 255, 0.3)',
-                    paddingBottom: '10px',
-                    marginBottom: '5px'
-                  }}>
-                    <i className="fas fa-lock" style={{ 
-                      fontSize: '18px', 
-                      color: 'rgba(255, 255, 255, 0.9)',
-                      marginRight: '15px',
-                      width: '24px'
-                    }}></i>
-                    <Form.Control
-                      type={showPassword ? "text" : "password"}
-                      placeholder="Password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: '#fff',
-                        fontSize: '16px',
-                        padding: '8px 0',
-                        outline: 'none',
-                        boxShadow: 'none',
-                        flex: 1
-                      }}
-                      className="login-input"
-                    />
-                    <i 
-                      className={showPassword ? "fas fa-eye-slash" : "fas fa-eye"}
-                      onClick={() => setShowPassword(!showPassword)}
-                      style={{ 
-                        fontSize: '18px', 
-                        color: 'rgba(255, 255, 255, 0.7)',
-                        cursor: 'pointer',
-                        padding: '0 5px',
-                        transition: 'color 0.3s'
-                      }}
-                      onMouseEnter={(e) => e.target.style.color = 'rgba(255, 255, 255, 0.9)'}
-                      onMouseLeave={(e) => e.target.style.color = 'rgba(255, 255, 255, 0.7)'}
-                    ></i>
-                  </div>
-                </Form.Group>
-
-                {/* Remember Me and Forgot Password */}
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: '30px',
-                  flexWrap: 'wrap',
-                  gap: '10px'
-                }}>
-                  <Form.Group style={{ marginBottom: 0 }}>
-                    <Form.Check
-                      type="checkbox"
-                      label="Remember me"
-                      checked={rememberMe}
-                      onChange={(e) => setRememberMe(e.target.checked)}
-                      style={{
-                        color: '#fff',
-                        fontSize: '14px'
-                      }}
-                      className="login-checkbox"
-                    />
-                  </Form.Group>
-                  <a 
-                    href="#" 
-                    onClick={handleForgotPasswordClick}
-                    style={{ 
-                      color: 'rgba(255, 255, 255, 0.9)',
-                      fontSize: '14px',
-                      textDecoration: 'none',
-                      transition: 'opacity 0.3s'
-                    }}
-                    onMouseEnter={(e) => e.target.style.opacity = '0.7'}
-                    onMouseLeave={(e) => e.target.style.opacity = '1'}
-                  >
-                    Forgot Password?
+              <Form.Group className="rf-form-group">
+                <div className="rf-label-row">
+                  <Form.Label className="rf-label" style={{ marginBottom: 0 }}>Password</Form.Label>
+                  <a href="#" onClick={handleForgotPasswordClick} className="rf-forgot-link">
+                    Forgot password?
                   </a>
                 </div>
-
-                {/* Login Button */}
-                <Button
-                  type="submit"
-                  disabled={loading}
-                  style={{
-                    width: '100%',
-                    background: 'linear-gradient(to right, #8e44ad, #3498db)',
-                    border: 'none',
-                    borderRadius: '25px',
-                    padding: '12px',
-                    fontSize: '16px',
-                    fontWeight: '600',
-                    letterSpacing: '1px',
-                    textTransform: 'uppercase',
-                    boxShadow: '0 4px 15px rgba(142, 68, 173, 0.4)',
-                    transition: 'all 0.3s ease',
-                    marginBottom: '20px'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.transform = 'translateY(-2px)';
-                    e.target.style.boxShadow = '0 6px 20px rgba(142, 68, 173, 0.6)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.transform = 'translateY(0)';
-                    e.target.style.boxShadow = '0 4px 15px rgba(142, 68, 173, 0.4)';
-                  }}
-                >
-                  {loading ? 'Logging in...' : 'LOGIN'}
-                </Button>
-              </Form>
-              ) : (
-                <Form onSubmit={otpSent ? handleVerifyOtpAndReset : handleSendOtp}>
-                  {/* Email Field */}
-                  <Form.Group style={{ marginBottom: '20px' }}>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      borderBottom: '1px solid rgba(255, 255, 255, 0.3)',
-                      paddingBottom: '10px',
-                      marginBottom: '5px'
-                    }}>
-                      <i className="far fa-envelope" style={{ 
-                        fontSize: '20px', 
-                        color: 'rgba(255, 255, 255, 0.9)',
-                        marginRight: '15px',
-                        width: '24px'
-                      }}></i>
-                      <Form.Control
-                        type="email"
-                        placeholder="Email ID"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        required
-                        disabled={otpSent}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: '#fff',
-                          fontSize: '16px',
-                          padding: '8px 0',
-                          outline: 'none',
-                          boxShadow: 'none'
-                        }}
-                        className="login-input"
-                      />
-                    </div>
-                  </Form.Group>
-
-                  {/* Send OTP Link */}
-                  {!otpSent && (
-                    <div style={{ marginBottom: '20px', textAlign: 'right' }}>
-                      <a 
-                        href="#" 
-                        onClick={handleSendOtp}
-                        style={{ 
-                          color: 'rgba(255, 255, 255, 0.9)',
-                          fontSize: '14px',
-                          textDecoration: 'none',
-                          transition: 'opacity 0.3s',
-                          cursor: sendingOtp ? 'not-allowed' : 'pointer',
-                          opacity: sendingOtp ? 0.6 : 1
-                        }}
-                        onMouseEnter={(e) => !sendingOtp && (e.target.style.opacity = '0.7')}
-                        onMouseLeave={(e) => !sendingOtp && (e.target.style.opacity = '1')}
-                      >
-                        {sendingOtp ? 'Sending OTP...' : 'Send OTP'}
-                      </a>
-                    </div>
-                  )}
-
-                  {/* OTP Field */}
-                  {otpSent && (
-                    <Form.Group style={{ marginBottom: '20px' }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        borderBottom: '1px solid rgba(255, 255, 255, 0.3)',
-                        paddingBottom: '10px',
-                        marginBottom: '5px'
-                      }}>
-                        <i className="fas fa-key" style={{ 
-                          fontSize: '18px', 
-                          color: 'rgba(255, 255, 255, 0.9)',
-                          marginRight: '15px',
-                          width: '24px'
-                        }}></i>
-                        <Form.Control
-                          type="text"
-                          placeholder="Enter OTP (5 digits)"
-                          value={otp}
-                          onChange={(e) => {
-                            const value = e.target.value.replace(/\D/g, '').slice(0, 5);
-                            setOtp(value);
-                            setError('');
-                          }}
-                          ref={otpInputRef}
-                          required
-                          maxLength={5}
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            color: '#fff',
-                            fontSize: '16px',
-                            padding: '8px 0',
-                            outline: 'none',
-                            boxShadow: 'none'
-                          }}
-                          className="login-input"
-                        />
-                      </div>
-                    </Form.Group>
-                  )}
-
-                  {/* New Password Field */}
-                  {otpSent && (
-                    <Form.Group style={{ marginBottom: '20px' }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        borderBottom: '1px solid rgba(255, 255, 255, 0.3)',
-                        paddingBottom: '10px',
-                        marginBottom: '5px'
-                      }}>
-                        <i className="fas fa-lock" style={{ 
-                          fontSize: '18px', 
-                          color: 'rgba(255, 255, 255, 0.9)',
-                          marginRight: '15px',
-                          width: '24px'
-                        }}></i>
-                        <Form.Control
-                          type={showNewPassword ? "text" : "password"}
-                          placeholder="New Password"
-                          value={newPassword}
-                          onChange={(e) => {
-                            setNewPassword(e.target.value);
-                            setError('');
-                          }}
-                          required
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            color: '#fff',
-                            fontSize: '16px',
-                            padding: '8px 0',
-                            outline: 'none',
-                            boxShadow: 'none',
-                            flex: 1
-                          }}
-                          className="login-input"
-                        />
-                        <i 
-                          className={showNewPassword ? "fas fa-eye-slash" : "fas fa-eye"}
-                          onClick={() => setShowNewPassword(!showNewPassword)}
-                          style={{ 
-                            fontSize: '18px', 
-                            color: 'rgba(255, 255, 255, 0.7)',
-                            cursor: 'pointer',
-                            padding: '0 5px',
-                            transition: 'color 0.3s'
-                          }}
-                          onMouseEnter={(e) => e.target.style.color = 'rgba(255, 255, 255, 0.9)'}
-                          onMouseLeave={(e) => e.target.style.color = 'rgba(255, 255, 255, 0.7)'}
-                        ></i>
-                      </div>
-                    </Form.Group>
-                  )}
-
-                  {/* Confirm Password Field */}
-                  {otpSent && (
-                    <Form.Group style={{ marginBottom: '30px' }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        borderBottom: '1px solid rgba(255, 255, 255, 0.3)',
-                        paddingBottom: '10px',
-                        marginBottom: '5px'
-                      }}>
-                        <i className="fas fa-lock" style={{ 
-                          fontSize: '18px', 
-                          color: 'rgba(255, 255, 255, 0.9)',
-                          marginRight: '15px',
-                          width: '24px'
-                        }}></i>
-                        <Form.Control
-                          type={showConfirmPassword ? "text" : "password"}
-                          placeholder="Confirm New Password"
-                          value={confirmPassword}
-                          onChange={(e) => {
-                            setConfirmPassword(e.target.value);
-                            setError('');
-                          }}
-                          required
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            color: '#fff',
-                            fontSize: '16px',
-                            padding: '8px 0',
-                            outline: 'none',
-                            boxShadow: 'none',
-                            flex: 1
-                          }}
-                          className="login-input"
-                        />
-                        <i 
-                          className={showConfirmPassword ? "fas fa-eye-slash" : "fas fa-eye"}
-                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                          style={{ 
-                            fontSize: '18px', 
-                            color: 'rgba(255, 255, 255, 0.7)',
-                            cursor: 'pointer',
-                            padding: '0 5px',
-                            transition: 'color 0.3s'
-                          }}
-                          onMouseEnter={(e) => e.target.style.color = 'rgba(255, 255, 255, 0.9)'}
-                          onMouseLeave={(e) => e.target.style.color = 'rgba(255, 255, 255, 0.7)'}
-                        ></i>
-                      </div>
-                    </Form.Group>
-                  )}
-
-                  {/* Submit Button */}
-                  <Button
-                    type="submit"
-                    disabled={sendingOtp || resettingPassword || (otpSent && (!otp || otp.length !== 5 || !newPassword || !confirmPassword))}
-                    style={{
-                      width: '100%',
-                      background: 'linear-gradient(to right, #8e44ad, #3498db)',
-                      border: 'none',
-                      borderRadius: '25px',
-                      padding: '12px',
-                      fontSize: '16px',
-                      fontWeight: '600',
-                      letterSpacing: '1px',
-                      textTransform: 'uppercase',
-                      boxShadow: '0 4px 15px rgba(142, 68, 173, 0.4)',
-                      transition: 'all 0.3s ease',
-                      marginBottom: '20px',
-                      opacity: (sendingOtp || resettingPassword || (otpSent && (!otp || otp.length !== 5 || !newPassword || !confirmPassword))) ? 0.6 : 1
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!sendingOtp && !resettingPassword && !(otpSent && (!otp || otp.length !== 5 || !newPassword || !confirmPassword))) {
-                        e.target.style.transform = 'translateY(-2px)';
-                        e.target.style.boxShadow = '0 6px 20px rgba(142, 68, 173, 0.6)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.transform = 'translateY(0)';
-                      e.target.style.boxShadow = '0 4px 15px rgba(142, 68, 173, 0.4)';
-                    }}
-                  >
-                    {sendingOtp ? 'Sending OTP...' : resettingPassword ? 'Resetting Password...' : otpSent ? 'Reset Password' : 'Send OTP'}
-                  </Button>
-
-                  {/* Back to Login Link */}
-                  <div style={{ textAlign: 'center', marginTop: '10px' }}>
-                    <a 
-                      href="#" 
-                      onClick={(e) => {
-                        e.preventDefault();
-                        handleBackToLogin();
-                      }}
-                      style={{ 
-                        color: 'rgba(255, 255, 255, 0.9)',
-                        fontSize: '14px',
-                        textDecoration: 'none',
-                        transition: 'opacity 0.3s'
-                      }}
-                      onMouseEnter={(e) => e.target.style.opacity = '0.7'}
-                      onMouseLeave={(e) => e.target.style.opacity = '1'}
-                    >
-                      Back to Login
-                    </a>
+                <div className="rf-input-wrapper">
+                  <Form.Control
+                    type={showPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="rf-input"
+                  />
+                  <i className="fas fa-lock rf-input-icon"></i>
+                  <div className={`rf-eye-btn ${password.length > 0 ? 'visible' : ''}`} onClick={() => setShowPassword(!showPassword)}>
+                    <i className={`fas ${showPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
                   </div>
-                </Form>
-              )}
+                </div>
+              </Form.Group>
 
-              {/* Register Link */}
-              <div style={{ textAlign: 'center', marginTop: '20px' }}>
-                <span style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '14px', marginRight: '8px' }}>
-                  Don't have an account?
-                </span>
-                <a 
-                  href="#" 
-                  onClick={(e) => {
-                    e.preventDefault();
-                    navigate('/register');
-                  }}
-                  style={{ 
-                    color: 'rgba(255, 255, 255, 0.9)',
-                    fontSize: '14px',
-                    textDecoration: 'none',
-                    fontWeight: '600',
-                    transition: 'opacity 0.3s'
-                  }}
-                  onMouseEnter={(e) => e.target.style.opacity = '0.7'}
-                  onMouseLeave={(e) => e.target.style.opacity = '1'}
-                >
-                  Register
-                </a>
+              <div style={{ marginBottom: '24px' }}></div>
+
+              <button type="submit" disabled={loading} className="rf-btn rf-btn-primary">
+                {loading ? 'Signing in...' : 'Sign In'}
+              </button>
+            </Form>
+          </>
+        ) : (
+          <Form onSubmit={otpSent ? handleVerifyOtpAndReset : handleSendOtp} className="rf-form">
+            <Form.Group className="rf-form-group">
+              <Form.Label className="rf-label">Email address</Form.Label>
+              <div className="rf-input-wrapper">
+                <Form.Control
+                  type="email"
+                  placeholder="name@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  disabled={otpSent}
+                  className="rf-input"
+                  style={{ opacity: otpSent ? 0.6 : 1, backgroundColor: otpSent ? '#F3F4F6' : '#FFFFFF' }}
+                />
+                <i className="far fa-envelope rf-input-icon"></i>
               </div>
+            </Form.Group>
+
+            {!otpSent && (
+              <div style={{ textAlign: 'right', marginBottom: '24px' }}>
+                <button type="button" onClick={handleSendOtp} disabled={sendingOtp} className="rf-btn rf-btn-google" style={{ width: 'auto', padding: '8px 16px', fontSize: '13px' }}>
+                  {sendingOtp ? 'Sending...' : 'Send Security Code'}
+                </button>
+              </div>
+            )}
+
+            {otpSent && (
+              <Form.Group className="rf-form-group">
+                <Form.Label className="rf-label">Security Code</Form.Label>
+                <div className="rf-input-wrapper">
+                  <Form.Control
+                    type="text"
+                    placeholder="5-digit code"
+                    value={otp}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '').slice(0, 5);
+                      setOtp(value);
+                      setError('');
+                    }}
+                    ref={otpInputRef}
+                    required
+                    maxLength={5}
+                    className="rf-input rf-tracking-wide"
+                  />
+                  <i className="fas fa-key rf-input-icon"></i>
+                </div>
+              </Form.Group>
+            )}
+
+            {otpSent && (
+              <Form.Group className="rf-form-group">
+                <Form.Label className="rf-label">New Password</Form.Label>
+                <div className="rf-input-wrapper">
+                  <Form.Control
+                    type={showNewPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={newPassword}
+                    onChange={(e) => { setNewPassword(e.target.value); setError(''); }}
+                    required
+                    className="rf-input"
+                  />
+                  <i className="fas fa-lock rf-input-icon"></i>
+                  <div className={`rf-eye-btn ${newPassword.length > 0 ? 'visible' : ''}`} onClick={() => setShowNewPassword(!showNewPassword)}>
+                    <i className={`fas ${showNewPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                  </div>
+                </div>
+              </Form.Group>
+            )}
+
+            {otpSent && (
+              <Form.Group className="rf-form-group" style={{ marginBottom: '24px' }}>
+                <Form.Label className="rf-label">Confirm Password</Form.Label>
+                <div className="rf-input-wrapper">
+                  <Form.Control
+                    type={showConfirmPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={confirmPassword}
+                    onChange={(e) => { setConfirmPassword(e.target.value); setError(''); }}
+                    required
+                    className="rf-input"
+                  />
+                  <i className="fas fa-lock rf-input-icon"></i>
+                  <div className={`rf-eye-btn ${confirmPassword.length > 0 ? 'visible' : ''}`} onClick={() => setShowConfirmPassword(!showConfirmPassword)}>
+                    <i className={`fas ${showConfirmPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                  </div>
+                </div>
+              </Form.Group>
+            )}
+
+            <button
+              type="submit"
+              disabled={sendingOtp || resettingPassword || (otpSent && (!otp || otp.length !== 5 || !newPassword || !confirmPassword))}
+              className="rf-btn rf-btn-primary"
+            >
+              {sendingOtp ? 'Sending...' : resettingPassword ? 'Verifying...' : otpSent ? 'Update Password' : 'Submit'}
+            </button>
+
+            <div style={{ textAlign: 'center', marginTop: '24px' }}>
+              <a href="#" onClick={(e) => { e.preventDefault(); handleBackToLogin(); }} className="rf-back-link">
+                Back to sign in
+              </a>
             </div>
-          </Col>
-        </Row>
-      </Container>
+          </Form>
+        )}
+
+        {!showForgotPassword && (
+          <div className="rf-footer">
+            <span>Don't have an account?</span>
+            <a href="#" onClick={(e) => { e.preventDefault(); navigate('/register'); }}>
+              Sign up
+            </a>
+          </div>
+        )}
+      </div>
 
       <style>{`
-        .login-input::placeholder {
-          color: rgba(255, 255, 255, 0.6) !important;
+        /* Premium Solid Theme Design System */
+        .rf-theme-bg {
+          min-height: 100vh;
+          background: linear-gradient(135deg, #F9FAFB, #E5E7EB, #F9FAFB);
+          background-size: 200% 200%;
+          animation: gradientShift 15s ease infinite;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 24px;
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
-        .login-input:focus {
-          background: transparent !important;
-          border: none !important;
+
+        @keyframes gradientShift {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+
+        .rf-card {
+          background: #FFFFFF;
+          border-radius: 20px;
+          padding: 40px;
+          width: 100%;
+          max-width: 440px;
+          box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+        }
+
+        /* --- Header --- */
+        .rf-header {
+          text-align: center;
+          margin-bottom: 32px;
+        }
+        .rf-logo {
+          width: 140px;
+          object-fit: contain;
+          margin-bottom: 24px;
+        }
+        .rf-heading {
+          color: #111827;
+          font-size: 26px;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          margin-bottom: 8px;
+        }
+        .rf-subtext {
+          color: #6B7280;
+          font-size: 15px;
+        }
+
+        /* --- Alerts --- */
+        .rf-alert {
+          padding: 12px 16px;
+          border-radius: 10px;
+          margin-bottom: 24px;
+          font-size: 14px;
+          font-weight: 500;
+          text-align: center;
+        }
+        .rf-alert-error {
+          background: #FEF2F2;
+          color: #DC2626;
+        }
+        .rf-alert-success {
+          background: #F0FDF4;
+          color: #16A34A;
+        }
+
+        /* --- Button System --- */
+        .rf-social-group {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .rf-btn {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 10px;
+          width: 100%;
+          border-radius: 12px;
+          padding: 12px;
+          font-size: 15px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 200ms ease;
+        }
+        .rf-btn-google {
+          background: #FFFFFF;
+          color: #374151;
+          border: 1px solid #D1D5DB;
+        }
+        .rf-btn-google:hover {
+          background: #F9FAFB;
+        }
+        .rf-badge-last-used {
+          position: absolute;
+          right: -10px;
+          top: -14px;
+          background: #111827;
+          color: #FFFFFF;
+          padding: 4px 10px;
+          border-radius: 6px;
+          font-size: 11px;
+          font-weight: 500;
+          box-shadow: 0 2px 4px rgba(17, 24, 39, 0.2);
+          letter-spacing: 0.2px;
+        }
+        .rf-btn-github {
+          background: #1F2937;
+          color: #FFFFFF;
+          border: 1px solid #1F2937;
+        }
+        .rf-btn-github:hover {
+          background: #374151;
+          transform: translateY(-1px);
+        }
+        .rf-btn-primary {
+          background: #111827;
+          color: #FFFFFF;
+          border: none;
+          font-weight: 600;
+          box-shadow: 0 4px 12px rgba(17, 24, 39, 0.15);
+        }
+        .rf-btn-primary:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 6px 16px rgba(17, 24, 39, 0.25);
+          background: #000000;
+        }
+        .rf-btn-primary:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+          transform: none;
+        }
+
+        /* --- Divider --- */
+        .rf-divider {
+          display: flex;
+          align-items: center;
+          margin: 24px 0;
+        }
+        .rf-divider-line {
+          flex: 1;
+          height: 1px;
+          background: #E5E7EB;
+        }
+        .rf-divider-text {
+          padding: 0 16px;
+          color: #9CA3AF;
+          font-size: 13px;
+          font-weight: 500;
+        }
+
+        /* --- Form Elements --- */
+        .rf-form-group {
+          margin-bottom: 20px;
+        }
+        .rf-label-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 6px;
+        }
+        .rf-label {
+          color: #374151;
+          font-size: 14px;
+          font-weight: 600;
+          margin-bottom: 6px;
+          display: block;
+        }
+
+        .rf-input-wrapper {
+          position: relative;
+        }
+        .rf-input {
+          background: #FFFFFF !important;
+          border: 1px solid #D1D5DB !important;
+          color: #111827 !important;
+          padding: 12px 16px 12px 42px !important;
+          border-radius: 10px !important;
+          font-size: 15px !important;
+          transition: all 200ms ease !important;
+          outline: none !important;
+          width: 100%;
           box-shadow: none !important;
-          color: #fff !important;
         }
-        .login-checkbox .form-check-input {
-          background-color: transparent;
-          border: 2px solid rgba(255, 255, 255, 0.5);
+        .rf-input::placeholder {
+          color: #9CA3AF !important;
+        }
+        .rf-input:focus {
+          border-color: #111827 !important;
+          box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.1) !important;
+        }
+        .rf-tracking-wide {
+          letter-spacing: 4px;
+          font-weight: 700;
+        }
+
+        .rf-input-icon {
+          position: absolute;
+          left: 14px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: #9CA3AF;
+          font-size: 16px;
+          transition: color 200ms ease;
+          pointer-events: none;
+        }
+        .rf-input:focus + .rf-input-icon {
+          color: #111827;
+        }
+
+        .rf-eye-btn {
+          position: absolute;
+          right: 14px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: #9CA3AF;
+          cursor: pointer;
+          transition: all 200ms ease;
+          opacity: 0;
+          font-size: 16px;
+        }
+        .rf-input-wrapper:hover .rf-eye-btn,
+        .rf-input:focus ~ .rf-eye-btn,
+        .rf-eye-btn.visible {
+          opacity: 1;
+        }
+        .rf-eye-btn:hover {
+          color: #4B5563;
+        }
+
+        /* --- Checkbox & Links --- */
+        .rf-checkbox-wrapper {
+          display: flex;
+          align-items: center;
+          cursor: pointer;
+        }
+        .rf-checkbox {
+          width: 16px;
+          height: 16px;
+          border: 1px solid #D1D5DB;
           border-radius: 4px;
+          appearance: none;
+          background: #FFFFFF;
+          cursor: pointer;
+          transition: all 150ms ease;
+          position: relative;
         }
-        .login-checkbox .form-check-input:checked {
-          background-color: rgba(142, 68, 173, 0.8);
-          border-color: rgba(142, 68, 173, 0.8);
+        .rf-checkbox:checked {
+          background: #111827;
+          border-color: #111827;
         }
-        .login-checkbox .form-check-label {
-          color: rgba(255, 255, 255, 0.9);
+        .rf-checkbox:checked::after {
+          content: '';
+          position: absolute;
+          left: 4px;
+          top: 1px;
+          width: 5px;
+          height: 10px;
+          border: solid white;
+          border-width: 0 2px 2px 0;
+          transform: rotate(45deg);
+        }
+        .rf-checkbox-label {
+          color: #4B5563;
+          font-size: 14px;
+          font-weight: 500;
           margin-left: 8px;
         }
-        .login-checkbox .form-check-input:focus {
-          box-shadow: 0 0 0 0.2rem rgba(142, 68, 173, 0.25);
+
+        .rf-forgot-link, .rf-back-link {
+          color: #6B7280;
+          font-size: 13px;
+          font-weight: 500;
+          text-decoration: none;
+          transition: all 150ms ease;
+        }
+        .rf-forgot-link:hover, .rf-back-link:hover {
+          color: #111827;
+        }
+
+        /* --- Footer --- */
+        .rf-footer {
+          margin-top: 32px;
+          text-align: center;
+          color: #6B7280;
+          font-size: 14px;
+        }
+        .rf-footer a {
+          color: #111827;
+          font-weight: 600;
+          text-decoration: none;
+          margin-left: 6px;
+          transition: all 150ms ease;
+        }
+        .rf-footer a:hover {
+          color: #4B5563;
+          text-decoration: underline;
         }
       `}</style>
     </div>

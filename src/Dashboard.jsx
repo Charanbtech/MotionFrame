@@ -12,15 +12,9 @@ const Dashboard = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   const [modificationFilter, setModificationFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState('Un assigned');
+  const [statusFilter, setStatusFilter] = useState('All');
 
-  // Check if user is owner - redirect if not
-  useEffect(() => {
-    if (user && !user.is_owner) {
-      alert('Access denied. Only owners can access the Dashboard page.');
-      navigate('/');
-    }
-  }, [user, navigate]);
+  // Access check removed - all authenticated users can access Dashboard
 
   // Load uploaded files from localStorage (shared with BulkUpload)
   const [documents, setDocuments] = useState([]);
@@ -46,19 +40,13 @@ const Dashboard = () => {
   const [createProjectOnAssign, setCreateProjectOnAssign] = useState(false);
   const dropdownRef = useRef(null);
 
-  // Check if user is owner - redirect if not
-  useEffect(() => {
-    if (user && !user.is_owner) {
-      alert('Access denied. Only owners can access the Dashboard page.');
-      navigate('/');
-    }
-  }, [user, navigate]);
+
 
   useEffect(() => {
     // Load files from backend API
     const loadUploadedFiles = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/bulk-upload/files');
+        const response = await fetch('/api/bulk-upload/files');
         if (response.ok) {
           const files = await response.json();
           // Transform uploaded files to document format
@@ -91,7 +79,7 @@ const Dashboard = () => {
     // Load users
     const loadUsers = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/users');
+        const response = await fetch('/api/users');
         if (response.ok) {
           const usersData = await response.json();
           setUsers(usersData);
@@ -258,7 +246,7 @@ const Dashboard = () => {
         return;
       }
 
-      const projectResponse = await fetch('http://localhost:8000/api/projects', {
+      const projectResponse = await fetch('/api/projects', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -299,7 +287,7 @@ const Dashboard = () => {
       const projectId = projectData.id;
 
       const assignPromises = Array.from(selectedFiles).map(async (fileId) => {
-        const response = await fetch(`http://localhost:8000/api/bulk-upload/files/${fileId}`, {
+        const response = await fetch(`/api/bulk-upload/files/${fileId}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -328,7 +316,7 @@ const Dashboard = () => {
       setProjectNameForAssign('');
 
       // Reload files
-      const response = await fetch('http://localhost:8000/api/bulk-upload/files');
+      const response = await fetch('/api/bulk-upload/files');
       if (response.ok) {
         const files = await response.json();
         const transformedFiles = files.map((file) => ({
@@ -350,7 +338,7 @@ const Dashboard = () => {
       }
 
       // Reload users to update file counts
-      const usersResponse = await fetch('http://localhost:8000/api/users');
+      const usersResponse = await fetch('/api/users');
       if (usersResponse.ok) {
         const usersData = await usersResponse.json();
         setUsers(usersData);
@@ -376,7 +364,7 @@ const Dashboard = () => {
     setFileToExport(file);
     
     try {
-      const response = await fetch(`http://localhost:8000/api/bulk-upload/files/${file.id}/export`);
+      const response = await fetch(`/api/bulk-upload/files/${file.id}/export`);
       
       if (!response.ok) {
         throw new Error(`Export failed: ${response.statusText}`);
@@ -424,7 +412,7 @@ const Dashboard = () => {
       }
       // Otherwise, keep assigned_to (it will show who completed it even when unassigned)
       
-      const response = await fetch(`http://localhost:8000/api/bulk-upload/files/${fileToRevert.id}`, {
+      const response = await fetch(`/api/bulk-upload/files/${fileToRevert.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -437,7 +425,7 @@ const Dashboard = () => {
       }
 
       // Reload files
-      const reloadResponse = await fetch('http://localhost:8000/api/bulk-upload/files');
+      const reloadResponse = await fetch('/api/bulk-upload/files');
       if (reloadResponse.ok) {
         const files = await reloadResponse.json();
         const transformedFiles = files.map((file) => ({
@@ -496,7 +484,7 @@ const Dashboard = () => {
           updateData.assigned_to = null;
         }
         
-        const response = await fetch(`http://localhost:8000/api/bulk-upload/files/${file.id}`, {
+        const response = await fetch(`/api/bulk-upload/files/${file.id}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -515,7 +503,7 @@ const Dashboard = () => {
       const successCount = results.filter(r => r.success).length;
 
       // Reload files
-      const reloadResponse = await fetch('http://localhost:8000/api/bulk-upload/files');
+      const reloadResponse = await fetch('/api/bulk-upload/files');
       if (reloadResponse.ok) {
         const files = await reloadResponse.json();
         const transformedFiles = files.map((file) => ({
@@ -555,20 +543,7 @@ const Dashboard = () => {
     }
   };
 
-  // Show access denied message if user is not owner
-  if (user && !user.is_owner) {
-    return (
-      <div className="dashboard-container">
-        <Container fluid className="py-4 px-3 px-md-4">
-          <div style={{ textAlign: 'center', padding: '50px' }}>
-            <h2>Access Denied</h2>
-            <p>Only owners can access the Dashboard page.</p>
-            <Button onClick={() => navigate('/')}>Go to Home</Button>
-          </div>
-        </Container>
-      </div>
-    );
-  }
+
 
   return (
     <div className="dashboard-container">
@@ -858,7 +833,9 @@ const Dashboard = () => {
                   fontSize: '14px',
                   pointerEvents: 'none'
                 }}>
-                  🔍
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ADADAD" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                  </svg>
                 </span>
               </div>
             </div>
@@ -899,7 +876,7 @@ const Dashboard = () => {
                       </td>
                       <td>
                         <a 
-                          href={`http://localhost:8000/api/bulk-upload/files/${doc.id}/preview`}
+                          href={`/api/bulk-upload/files/${doc.id}/preview`}
                           target="_blank"
                           rel="noopener noreferrer"
                           style={{ textDecoration: 'none', color: '#053096' }}
@@ -1728,7 +1705,7 @@ const Dashboard = () => {
                 console.log('Creating project with token:', token ? `${token.substring(0, 20)}...` : 'No token');
 
                 // Create project
-                const projectResponse = await fetch('http://localhost:8000/api/projects', {
+                const projectResponse = await fetch('/api/projects', {
                   method: 'POST',
                   headers: { 
                     'Content-Type': 'application/json',
@@ -1790,7 +1767,7 @@ const Dashboard = () => {
                   for (let j = 0; j < filesForThisUser && fileIndex < unassignedFiles.length; j++) {
                     const file = unassignedFiles[fileIndex];
                     assignPromises.push(
-                      fetch(`http://localhost:8000/api/bulk-upload/files/${file.id}`, {
+                      fetch(`/api/bulk-upload/files/${file.id}`, {
                         method: 'PUT',
                         headers: {
                           'Content-Type': 'application/json',
@@ -1817,7 +1794,7 @@ const Dashboard = () => {
                 }
 
                 // Reload files to reflect changes
-                const reloadResponse = await fetch('http://localhost:8000/api/bulk-upload/files');
+                const reloadResponse = await fetch('/api/bulk-upload/files');
                 if (reloadResponse.ok) {
                   const files = await reloadResponse.json();
                   const transformedFiles = files.map((file) => ({
@@ -1839,7 +1816,7 @@ const Dashboard = () => {
                 }
 
                 // Reload users to update their file counts (for Assign Document popup)
-                const usersResponse = await fetch('http://localhost:8000/api/users');
+                const usersResponse = await fetch('/api/users');
                 if (usersResponse.ok) {
                   const usersData = await usersResponse.json();
                   setUsers(usersData);
