@@ -1,7 +1,7 @@
 import React from 'react';
 import Lottie from 'lottie-react';
-import logoAnimation from '../logo_animation.json';
-import loadingBarAnimation from '../Loading Bar.json';
+import logoAnimation from './assets/logo_animation.json';
+import loadingBarAnimation from './assets/Loading Bar.json';
 
 const SplashScreen = () => {
   return (

@@ -28,8 +28,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-*.pt
-*.pth
 
 # Backend ignores
 back_end/venv/
