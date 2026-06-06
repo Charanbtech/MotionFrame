@@ -16,6 +16,11 @@ const Dashboard = () => {
   const [statusFilter, setStatusFilter] = useState('All');
 
   // Access check removed - all authenticated users can access Dashboard
+  useEffect(() => {
+    if (user && !user.is_owner) {
+      navigate('/');
+    }
+  }, [user, navigate]);
 
   // Load uploaded files from localStorage (shared with BulkUpload)
   const [documents, setDocuments] = useState([]);
@@ -38,7 +43,11 @@ const Dashboard = () => {
   const [showAutoAssignConfirm, setShowAutoAssignConfirm] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [projectNameForAssign, setProjectNameForAssign] = useState('');
+  const [classesForAssign, setClassesForAssign] = useState('');
   const [createProjectOnAssign, setCreateProjectOnAssign] = useState(false);
+  const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
+  const [rangeStart, setRangeStart] = useState('');
+  const [rangeEnd, setRangeEnd] = useState('');
   const dropdownRef = useRef(null);
 
 
@@ -47,7 +56,7 @@ const Dashboard = () => {
     // Load files from backend API
     const loadUploadedFiles = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
+        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files`);
         if (response.ok) {
           const files = await response.json();
           // Transform uploaded files to document format
@@ -80,7 +89,7 @@ const Dashboard = () => {
     // Load users
     const loadUsers = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/users');
+        const response = await fetch(`${API_BASE_URL}/api/users`);
         if (response.ok) {
           const usersData = await response.json();
           setUsers(usersData);
@@ -179,23 +188,38 @@ const Dashboard = () => {
     return doc.assignedTo && doc.assignedTo !== '--' && doc.status && doc.status !== 'Un assigned';
   };
 
-  // Handle file selection (now allows selecting both assigned and unassigned files)
-  const handleSelectFile = (fileId) => {
-    setSelectedFiles(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(fileId)) {
-        newSet.delete(fileId);
-      } else {
-        newSet.add(fileId);
-      }
-      return newSet;
-    });
+  // Handle file selection (with shift-click support)
+  const handleSelectFile = (e, fileId) => {
+    const currentIndex = filteredDocuments.findIndex(doc => doc.id === fileId);
+
+    if (e.shiftKey && lastSelectedIndex !== null && currentIndex !== -1) {
+      const start = Math.min(lastSelectedIndex, currentIndex);
+      const end = Math.max(lastSelectedIndex, currentIndex);
+      
+      const filesToSelect = filteredDocuments.slice(start, end + 1).map(doc => doc.id);
+      
+      setSelectedFiles(prev => {
+        const newSet = new Set(prev);
+        filesToSelect.forEach(id => newSet.add(id));
+        return newSet;
+      });
+    } else {
+      setSelectedFiles(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(fileId)) {
+          newSet.delete(fileId);
+        } else {
+          newSet.add(fileId);
+        }
+        return newSet;
+      });
+      setLastSelectedIndex(currentIndex);
+    }
   };
 
-  // Handle select all (now allows selecting all files, both assigned and unassigned)
-  const handleSelectAll = (e) => {
+  // Select only visible files on current page
+  const handleSelectVisible = (e) => {
     if (e.target.checked) {
-      // Select all files from current page and add to existing selections
       const allIds = paginatedDocuments.map(doc => doc.id);
       setSelectedFiles(prev => {
         const newSet = new Set(prev);
@@ -203,7 +227,6 @@ const Dashboard = () => {
         return newSet;
       });
     } else {
-      // Only deselect files from current page, keep selections from other pages
       const currentPageIds = paginatedDocuments.map(doc => doc.id);
       setSelectedFiles(prev => {
         const newSet = new Set(prev);
@@ -211,6 +234,46 @@ const Dashboard = () => {
         return newSet;
       });
     }
+  };
+
+  // Select all filtered files
+  const handleSelectAllFiltered = () => {
+    const allIds = filteredDocuments.map(doc => doc.id);
+    setSelectedFiles(new Set(allIds));
+  };
+  
+  // Clear selection
+  const handleClearSelection = () => {
+    setSelectedFiles(new Set());
+    setLastSelectedIndex(null);
+  };
+  
+  // Range select handler
+  const handleRangeSelect = () => {
+    const start = parseInt(rangeStart, 10);
+    const end = parseInt(rangeEnd, 10);
+    
+    if (isNaN(start) || isNaN(end) || start < 1 || end < 1) {
+      alert("Please enter valid positive numbers for the range.");
+      return;
+    }
+    
+    const maxVal = filteredDocuments.length;
+    if (maxVal === 0) return;
+    
+    const actualStart = Math.min(start, maxVal) - 1; 
+    const actualEnd = Math.min(end, maxVal) - 1;
+    
+    const sliceStart = Math.min(actualStart, actualEnd);
+    const sliceEnd = Math.max(actualStart, actualEnd);
+    
+    const filesToSelect = filteredDocuments.slice(sliceStart, sliceEnd + 1).map(doc => doc.id);
+    
+    setSelectedFiles(prev => {
+      const newSet = new Set(prev);
+      filesToSelect.forEach(id => newSet.add(id));
+      return newSet;
+    });
   };
 
   // Handle user selection from dropdown
@@ -247,7 +310,7 @@ const Dashboard = () => {
         return;
       }
 
-      const projectResponse = await fetch(`${API_BASE_URL}/api/projects', {
+      const projectResponse = await fetch(`${API_BASE_URL}/api/projects`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -257,7 +320,7 @@ const Dashboard = () => {
           name: projectNameForAssign,
           project_type: 'object-detection',
           description: `Project created with file assignment to ${selectedUser.name}`,
-          classes: []
+          classes: classesForAssign.split(',').map(c => c.trim()).filter(c => c)
         })
       });
 
@@ -287,7 +350,7 @@ const Dashboard = () => {
       const projectData = await projectResponse.json();
       const projectId = projectData.id;
 
-      const assignPromises = Array.from(selectedFiles).map(async (fileId) => {
+      for (const fileId of Array.from(selectedFiles)) {
         const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files/${fileId}`, {
           method: 'PUT',
           headers: {
@@ -304,20 +367,17 @@ const Dashboard = () => {
         if (!response.ok) {
           throw new Error(`Failed to assign file ${fileId}`);
         }
-
-        return response.json();
-      });
-
-      await Promise.all(assignPromises);
+      }
 
       // Clear selections
       setSelectedFiles(new Set());
       setSelectedUser(null);
       setShowConfirmModal(false);
       setProjectNameForAssign('');
+      setClassesForAssign('');
 
       // Reload files
-      const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
+      const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files`);
       if (response.ok) {
         const files = await response.json();
         const transformedFiles = files.map((file) => ({
@@ -339,7 +399,7 @@ const Dashboard = () => {
       }
 
       // Reload users to update file counts
-      const usersResponse = await fetch(`${API_BASE_URL}/api/users');
+      const usersResponse = await fetch(`${API_BASE_URL}/api/users`);
       if (usersResponse.ok) {
         const usersData = await usersResponse.json();
         setUsers(usersData);
@@ -426,7 +486,7 @@ const Dashboard = () => {
       }
 
       // Reload files
-      const reloadResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
+      const reloadResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files`);
       if (reloadResponse.ok) {
         const files = await reloadResponse.json();
         const transformedFiles = files.map((file) => ({
@@ -504,7 +564,7 @@ const Dashboard = () => {
       const successCount = results.filter(r => r.success).length;
 
       // Reload files
-      const reloadResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
+      const reloadResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files`);
       if (reloadResponse.ok) {
         const files = await reloadResponse.json();
         const transformedFiles = files.map((file) => ({
@@ -616,6 +676,13 @@ const Dashboard = () => {
               >
                 <i className="fas fa-user-plus"></i>
                 Users Details
+              </button>
+              <button 
+                className="btn-assign-document"
+                onClick={() => navigate('/projects-view')}
+              >
+                <i className="fas fa-project-diagram"></i>
+                Projects View
               </button>
             </div>
           </div>
@@ -842,17 +909,30 @@ const Dashboard = () => {
             </div>
           </div>
 
+          <div style={{ padding: '16px', backgroundColor: '#f8f9fa', borderBottom: '1px solid #dee2e6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <Button variant="outline-primary" size="sm" onClick={handleSelectAllFiltered}>Select All Filtered ({filteredDocuments.length})</Button>
+              <Button variant="outline-secondary" size="sm" onClick={handleClearSelection}>Clear</Button>
+              <span style={{ fontWeight: '600', marginLeft: '8px', color: '#053096' }}>{selectedFiles.size} files selected</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '14px', color: '#666' }}>Range (1-{filteredDocuments.length}):</span>
+              <Form.Control type="number" size="sm" placeholder="Start" value={rangeStart} onChange={e => setRangeStart(e.target.value)} style={{ width: '80px' }} />
+              <span>-</span>
+              <Form.Control type="number" size="sm" placeholder="End" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)} style={{ width: '80px' }} />
+              <Button variant="secondary" size="sm" onClick={handleRangeSelect}>Select Range</Button>
+            </div>
+          </div>
           <div className="table-responsive">
-            <Table striped bordered hover className="documents-table">
+            <Table striped bordered hover className="documents-table" style={{ marginTop: 0 }}>
               <thead>
                 <tr>
                   <th>
                     <Form.Check 
                       type="checkbox" 
-                      checked={paginatedDocuments.length > 0 && 
-                        paginatedDocuments.length > 0 &&
-                        paginatedDocuments.every(doc => selectedFiles.has(doc.id))}
-                      onChange={handleSelectAll}
+                      title="Select Visible Page"
+                      checked={paginatedDocuments.length > 0 && paginatedDocuments.every(doc => selectedFiles.has(doc.id))}
+                      onChange={handleSelectVisible}
                     />
                   </th>
                   <th>File Name</th>
@@ -872,7 +952,7 @@ const Dashboard = () => {
                         <Form.Check 
                           type="checkbox" 
                           checked={selectedFiles.has(doc.id)}
-                          onChange={() => handleSelectFile(doc.id)}
+                          onChange={(e) => handleSelectFile(e.nativeEvent, doc.id)}
                         />
                       </td>
                       <td>
@@ -1041,6 +1121,7 @@ const Dashboard = () => {
       <Modal show={showConfirmModal} onHide={() => {
         setShowConfirmModal(false);
         setProjectNameForAssign('');
+        setClassesForAssign('');
       }} centered>
         <Modal.Header closeButton>
           <Modal.Title>Create Project & Confirm Assignment</Modal.Title>
@@ -1060,6 +1141,19 @@ const Dashboard = () => {
             </Form.Text>
           </Form.Group>
 
+          <Form.Group className="mb-3">
+            <Form.Label>Classes (Optional)</Form.Label>
+            <Form.Control
+              type="text"
+              placeholder="e.g. Car, Pedestrian, Traffic Light"
+              value={classesForAssign}
+              onChange={(e) => setClassesForAssign(e.target.value)}
+            />
+            <Form.Text className="text-muted">
+              Comma-separated list of classes for the user to annotate
+            </Form.Text>
+          </Form.Group>
+
           <div className="mb-3">
             <p>
               Assign <strong>{selectedFiles.size}</strong> file(s) to{' '}
@@ -1074,6 +1168,7 @@ const Dashboard = () => {
           <Button variant="secondary" onClick={() => {
             setShowConfirmModal(false);
             setProjectNameForAssign('');
+            setClassesForAssign('');
           }} disabled={isAssigning}>
             Cancel
           </Button>
@@ -1104,7 +1199,7 @@ const Dashboard = () => {
               display: 'grid',
               gridTemplateColumns: '1fr 1fr',
               gap: '16px',
-              marginBottom: '24px'
+              marginBottom: '16px'
             }}>
               {/* Project Name Section */}
               <div style={{ 
@@ -1297,6 +1392,38 @@ const Dashboard = () => {
                 );
               })()}
               </div>
+            </div>
+
+            {/* Classes Selection Section */}
+            <div style={{ 
+              padding: '20px',
+              background: '#f8f9fa',
+              borderRadius: '8px',
+              border: '1px solid #e9ecef',
+              marginBottom: '24px'
+            }}>
+              <Form.Group className="mb-0">
+                <Form.Label style={{ 
+                  fontWeight: '600', 
+                  marginBottom: '8px',
+                  color: '#495057',
+                  fontSize: '14px'
+                }}>
+                  🏷️ Classes <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#6c757d' }}>(Comma separated, e.g., car, person, dog)</span>
+                </Form.Label>
+                <Form.Control
+                  type="text"
+                  placeholder="Enter classes..."
+                  value={classesForAssign}
+                  onChange={(e) => setClassesForAssign(e.target.value)}
+                  style={{
+                    padding: '12px',
+                    fontSize: '15px',
+                    border: '2px solid #dee2e6',
+                    borderRadius: '6px'
+                  }}
+                />
+              </Form.Group>
             </div>
 
             {/* Files Summary Section */}
@@ -1706,7 +1833,7 @@ const Dashboard = () => {
                 console.log('Creating project with token:', token ? `${token.substring(0, 20)}...` : 'No token');
 
                 // Create project
-                const projectResponse = await fetch(`${API_BASE_URL}/api/projects', {
+                const projectResponse = await fetch(`${API_BASE_URL}/api/projects`, {
                   method: 'POST',
                   headers: { 
                     'Content-Type': 'application/json',
@@ -1716,7 +1843,7 @@ const Dashboard = () => {
                     name: projectName,
                     project_type: 'object-detection',
                     description: `Auto-assigned project created from Dashboard`,
-                    classes: []
+                    classes: classesForAssign.split(',').map(c => c.trim()).filter(Boolean)
                   })
                 });
 
@@ -1757,7 +1884,7 @@ const Dashboard = () => {
                 const remainder = unassignedFiles.length % selectedUsersList.length;
 
                 let fileIndex = 0;
-                const assignPromises = [];
+                let failedAssignmentsCount = 0;
 
                 for (let i = 0; i < selectedUsersList.length; i++) {
                   const user = selectedUsersList[i];
@@ -1767,8 +1894,8 @@ const Dashboard = () => {
                   // Assign files to this user
                   for (let j = 0; j < filesForThisUser && fileIndex < unassignedFiles.length; j++) {
                     const file = unassignedFiles[fileIndex];
-                    assignPromises.push(
-                      fetch(`${API_BASE_URL}/api/bulk-upload/files/${file.id}`, {
+                    try {
+                      const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files/${file.id}`, {
                         method: 'PUT',
                         headers: {
                           'Content-Type': 'application/json',
@@ -1779,23 +1906,23 @@ const Dashboard = () => {
                           status: 'Assigned',
                           project_id: projectId  // Include project_id to create ProjectImage
                         })
-                      })
-                    );
+                      });
+                      if (!response.ok) {
+                        failedAssignmentsCount++;
+                      }
+                    } catch (err) {
+                      failedAssignmentsCount++;
+                    }
                     fileIndex++;
                   }
                 }
-
-                // Wait for all assignments to complete
-                const assignResults = await Promise.all(assignPromises);
                 
-                // Check if all assignments were successful
-                const failedAssignments = assignResults.filter(r => !r.ok);
-                if (failedAssignments.length > 0) {
-                  throw new Error(`${failedAssignments.length} file assignment(s) failed`);
+                if (failedAssignmentsCount > 0) {
+                  throw new Error(`${failedAssignmentsCount} file assignment(s) failed`);
                 }
 
                 // Reload files to reflect changes
-                const reloadResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
+                const reloadResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files`);
                 if (reloadResponse.ok) {
                   const files = await reloadResponse.json();
                   const transformedFiles = files.map((file) => ({
@@ -1817,7 +1944,7 @@ const Dashboard = () => {
                 }
 
                 // Reload users to update their file counts (for Assign Document popup)
-                const usersResponse = await fetch(`${API_BASE_URL}/api/users');
+                const usersResponse = await fetch(`${API_BASE_URL}/api/users`);
                 if (usersResponse.ok) {
                   const usersData = await usersResponse.json();
                   setUsers(usersData);

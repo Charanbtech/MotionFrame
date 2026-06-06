@@ -170,14 +170,16 @@ function Topnavbar() {
               >
                 Annotation
               </Nav.Link>
-              <Nav.Link
-                as={Link}
-                to="/dashboard"
-                active={false}
-                className={isActive('/dashboard') ? 'active' : ''}
-              >
-                Dashboard
-              </Nav.Link>
+              {user?.is_owner && (
+                <Nav.Link
+                  as={Link}
+                  to="/dashboard"
+                  active={false}
+                  className={isActive('/dashboard') ? 'active' : ''}
+                >
+                  Dashboard
+                </Nav.Link>
+              )}
             </Nav>
 
             <Nav className="ms-auto d-flex align-items-center aw-nav-actions">

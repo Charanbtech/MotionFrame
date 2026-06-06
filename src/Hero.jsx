@@ -1,5 +1,5 @@
 import { API_BASE_URL } from './config';
-import { Container, Button, Row, Col } from 'react-bootstrap';
+import { Container, Button, Row, Col, Modal } from 'react-bootstrap';
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -17,6 +17,8 @@ function ActionWorkspace() {
   const [showAllProjects, setShowAllProjects] = useState(false);
   const [allProjects, setAllProjects] = useState([]);
   const [loadingAllProjects, setLoadingAllProjects] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const videoRefs = useRef([]);
 
   const videos = [
@@ -60,7 +62,7 @@ function ActionWorkspace() {
       const fetchProjects = async () => {
         try {
           const token = localStorage.getItem('token');
-          const response = await fetch(`${API_BASE_URL}/api/projects', {
+          const response = await fetch(`${API_BASE_URL}/api/projects`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           if (response.ok) {
@@ -98,7 +100,7 @@ function ActionWorkspace() {
     setLoadingAllProjects(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -114,6 +116,36 @@ function ActionWorkspace() {
       console.error('Error fetching all projects:', error);
     } finally {
       setLoadingAllProjects(false);
+    }
+  };
+
+  const handleDeleteProject = (e, projectId) => {
+    e.stopPropagation();
+    setProjectToDelete(projectId);
+  };
+
+  const confirmDeleteProject = async () => {
+    if (!projectToDelete) return;
+    setIsDeleting(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/projects/${projectToDelete}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        setRecentProjects(prev => prev.filter(p => p.id !== projectToDelete));
+        setAllProjects(prev => prev.filter(p => p.id !== projectToDelete));
+        setProjectToDelete(null);
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        alert(`Failed to delete project: ${errorData.detail || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error deleting project:', error);
+      alert(`Failed to delete project: ${error.message}`);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -304,6 +336,15 @@ function ActionWorkspace() {
                     <div className="aw-project-header">
                       <h5 className="aw-project-name">{project.name}</h5>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Button 
+                          variant="danger" 
+                          size="sm" 
+                          className="px-2 py-0" 
+                          style={{ fontSize: '12px' }}
+                          onClick={(e) => handleDeleteProject(e, project.id)}
+                        >
+                          <i className="fas fa-trash"></i>
+                        </Button>
                         <span style={{
                           fontSize: '10px',
                           fontWeight: '600',
@@ -504,6 +545,14 @@ function ActionWorkspace() {
                       </div>
                       <div className="d-flex align-items-center gap-3">
                         <span className={`aw-status-badge ${project.status === 'Completed' ? 'status-complete' : 'status-active'}`}>{project.status}</span>
+                        <Button 
+                          variant="outline-danger" 
+                          size="sm" 
+                          className="px-2 py-0 border-0" 
+                          onClick={(e) => handleDeleteProject(e, project.id)}
+                        >
+                          <i className="fas fa-trash"></i>
+                        </Button>
                         <i className="fas fa-chevron-right text-muted"></i>
                       </div>
                     </div>
@@ -516,6 +565,25 @@ function ActionWorkspace() {
           </div>
         </div>
       )}
+
+      {/* Delete Project Confirmation Modal */}
+      <Modal show={!!projectToDelete} onHide={() => setProjectToDelete(null)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Delete Project</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p>Did you want to delete this project?</p>
+          <p className="text-danger small mb-0">This action cannot be undone. All images and annotations in this project will also be deleted.</p>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setProjectToDelete(null)} disabled={isDeleting}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={confirmDeleteProject} disabled={isDeleting}>
+            {isDeleting ? 'Deleting...' : 'Delete'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       <style>{`
         /* ================================

@@ -205,6 +205,16 @@ class UploadedFile(Base):
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class Assignment(Base):
+    __tablename__ = "assignments"
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, index=True)
+    file_id = Column(Integer, index=True)
+    user_id = Column(Integer, index=True)
+    status = Column(String, default="active") # active, revoked
+    assigned_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
 class PasswordResetOTP(Base):
     __tablename__ = "password_reset_otps"
     id = Column(Integer, primary_key=True, index=True)
@@ -217,9 +227,9 @@ class PasswordResetOTP(Base):
 # Create all tables in PostgreSQL database
 try:
     Base.metadata.create_all(bind=engine)
-    print("✅ Database tables created/verified successfully")
+    print("Database tables created/verified successfully")
 except Exception as e:
-    print(f"⚠️ Database connection error: {e}")
+    print(f"Database connection error: {e}")
     print("Please ensure PostgreSQL is running and the database 'roboflow' exists")
 
 # ============================================================================
@@ -244,7 +254,6 @@ else:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -257,7 +266,7 @@ app.add_middleware(
 # Generate a secure key with: python -c "import secrets; print(secrets.token_urlsafe(32))"
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 if SECRET_KEY == "your-secret-key-change-this-in-production":
-    print("⚠️  WARNING: Using default SECRET_KEY. Set SECRET_KEY environment variable in production!")
+    print("WARNING: Using default SECRET_KEY. Set SECRET_KEY environment variable in production!")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30 days
 
@@ -1209,6 +1218,49 @@ async def update_user_owner_status(user_id: int, request: Request, current_user:
         )
     finally:
         db.close()
+
+@app.delete("/api/users/{user_id}")
+async def delete_user(user_id: int, current_user: User = Depends(get_current_user)):
+    """Delete a user"""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+            
+        if user.id == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot delete your own account"
+            )
+            
+        # Unassign files assigned to this user
+        db.query(UploadedFile).filter(
+            (UploadedFile.assigned_to == user.name) |
+            (UploadedFile.assigned_to == user.email) |
+            (UploadedFile.assigned_to == user.username)
+        ).update(
+            {"assigned_to": None, "assigned_on": None, "status": "Un assigned"},
+            synchronize_session=False
+        )
+            
+        db.delete(user)
+        db.commit()
+        
+        return {"success": True, "message": "User deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete user: {str(e)}"
+        )
+    finally:
+        db.close()
 @app.post("/api/projects")
 async def create_project_api(request: Request, current_user: User = Depends(get_current_user)):
     db = SessionLocal()
@@ -1257,10 +1309,27 @@ async def create_project_api(request: Request, current_user: User = Depends(get_
         
 @app.get("/api/projects")
 async def list_projects(current_user: User = Depends(get_current_user)):
-    """Get projects for the current user only"""
+    """Get projects for the current user and projects they are assigned to"""
     db = SessionLocal()
     try:
-        projects = db.query(Project).filter(Project.user_id == current_user.id).order_by(Project.created_at.desc()).all()
+        # Get projects created by user
+        owned_projects = db.query(Project).filter(Project.user_id == current_user.id).all()
+        
+        # Get projects where user has active assignments
+        assigned_project_ids = db.query(Assignment.project_id).filter(
+            Assignment.user_id == current_user.id,
+            Assignment.status != 'revoked'
+        ).distinct().all()
+        
+        assigned_project_ids = [p[0] for p in assigned_project_ids]
+        assigned_projects = db.query(Project).filter(Project.id.in_(assigned_project_ids)).all()
+        
+        # Combine and remove duplicates
+        all_projects = {p.id: p for p in owned_projects + assigned_projects}.values()
+        
+        # Sort by created_at desc
+        all_projects = sorted(all_projects, key=lambda x: x.created_at, reverse=True)
+        
         return [
             {
                 "id": project.id,
@@ -1272,8 +1341,123 @@ async def list_projects(current_user: User = Depends(get_current_user)):
                 "user_id": project.user_id,
                 "created_at": project.created_at.isoformat() if project.created_at else None
             }
-            for project in projects
+            for project in all_projects
         ]
+    finally:
+        db.close()
+
+# ============================================================================
+# ASSIGNMENTS API
+# ============================================================================
+
+@app.get("/api/projects/assignments/summary")
+async def get_projects_assignments_summary():
+    """Get all assignments grouped by project for the dashboard"""
+    db = SessionLocal()
+    try:
+        projects = db.query(Project).all()
+        result = []
+        for p in projects:
+            assignments = db.query(Assignment).filter(
+                Assignment.project_id == p.id, 
+                Assignment.status != 'revoked'
+            ).all()
+            if not assignments:
+                continue
+            
+            user_ids = {a.user_id for a in assignments}
+            users = db.query(User).filter(User.id.in_(user_ids)).all()
+            users_list = [{"id": u.id, "name": u.name, "email": u.email} for u in users]
+            
+            result.append({
+                "project_id": p.id,
+                "project_name": p.name,
+                "assigned_users": users_list,
+                "file_count": len(assignments)
+            })
+        return result
+    finally:
+        db.close()
+
+@app.get("/api/projects/{project_id}/assignments")
+async def get_project_assignments(project_id: int):
+    db = SessionLocal()
+    try:
+        assignments = db.query(Assignment).filter(
+            Assignment.project_id == project_id,
+            Assignment.status != 'revoked'
+        ).all()
+        
+        result = []
+        for a in assignments:
+            file = db.query(UploadedFile).filter(UploadedFile.id == a.file_id).first()
+            user = db.query(User).filter(User.id == a.user_id).first()
+            if file and user:
+                result.append({
+                    "assignment_id": a.id,
+                    "file_id": a.file_id,
+                    "file_name": file.file_name,
+                    "file_status": file.status,
+                    "user_id": a.user_id,
+                    "user_name": user.name
+                })
+        return result
+    finally:
+        db.close()
+
+@app.put("/api/projects/{project_id}/assignments/revoke")
+async def bulk_revoke_assignments(project_id: int, request: Request):
+    db = SessionLocal()
+    try:
+        data = await request.json()
+        file_ids = data.get("file_ids", [])
+        
+        assignments = db.query(Assignment).filter(
+            Assignment.project_id == project_id,
+            Assignment.file_id.in_(file_ids)
+        ).all()
+        
+        for a in assignments:
+            a.status = 'revoked'
+            file = db.query(UploadedFile).filter(UploadedFile.id == a.file_id).first()
+            if file:
+                file.status = "Un assigned"
+                file.assigned_to = None
+                file.assigned_on = None
+                
+        db.commit()
+        return {"success": True, "revoked_count": len(assignments)}
+    finally:
+        db.close()
+
+@app.put("/api/projects/{project_id}/assignments/reassign")
+async def bulk_reassign_assignments(project_id: int, request: Request):
+    db = SessionLocal()
+    try:
+        data = await request.json()
+        file_ids = data.get("file_ids", [])
+        new_user_id = data.get("user_id")
+        
+        new_user = db.query(User).filter(User.id == new_user_id).first()
+        if not new_user:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        assignments = db.query(Assignment).filter(
+            Assignment.project_id == project_id,
+            Assignment.file_id.in_(file_ids),
+            Assignment.status != 'revoked'
+        ).all()
+        
+        for a in assignments:
+            a.user_id = new_user_id
+            
+            file = db.query(UploadedFile).filter(UploadedFile.id == a.file_id).first()
+            if file:
+                file.assigned_to = new_user.name
+                file.assigned_on = datetime.utcnow()
+                
+        db.commit()
+        return {"success": True, "reassigned_count": len(assignments)}
     finally:
         db.close()
 
@@ -1281,9 +1465,20 @@ async def list_projects(current_user: User = Depends(get_current_user)):
 async def get_project(project_id: int, current_user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
-        project = db.query(Project).filter(Project.id == project_id, Project.user_id == current_user.id).first()
+        project = db.query(Project).filter(Project.id == project_id).first()
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+            
+        # Check if user owns it or has an assignment
+        is_owner = project.user_id == current_user.id
+        has_assignment = db.query(Assignment).filter(
+            Assignment.project_id == project_id,
+            Assignment.user_id == current_user.id,
+            Assignment.status != 'revoked'
+        ).first() is not None
+        
+        if not (is_owner or has_assignment):
+            raise HTTPException(status_code=403, detail="Not authorized to access this project")
         return {
             "id": project.id,
             "name": project.name,
@@ -1461,10 +1656,20 @@ async def upload_file(file: UploadFile = File(...), project_id: int = Form(...),
 async def get_project_images(project_id: int, current_user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
-        # Verify project belongs to user
-        project = db.query(Project).filter(Project.id == project_id, Project.user_id == current_user.id).first()
+        # Verify project exists and belongs to user or user has assignment
+        project = db.query(Project).filter(Project.id == project_id).first()
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+            
+        is_owner = project.user_id == current_user.id
+        has_assignment = db.query(Assignment).filter(
+            Assignment.project_id == project_id,
+            Assignment.user_id == current_user.id,
+            Assignment.status != 'revoked'
+        ).first() is not None
+        
+        if not (is_owner or has_assignment):
+            raise HTTPException(status_code=403, detail="Not authorized to access this project")
         
         images = db.query(ProjectImage).filter(ProjectImage.project_id == project_id).all()
         return images
@@ -1978,7 +2183,8 @@ async def update_uploaded_file(file_id: int, request: Request):
         if 'assigned_to' in data:
             file.assigned_to = data['assigned_to']
         if 'assigned_on' in data:
-            file.assigned_on = datetime.fromisoformat(data['assigned_on']) if data['assigned_on'] else None
+            assigned_on_str = data['assigned_on'].replace('Z', '+00:00') if data['assigned_on'] else None
+            file.assigned_on = datetime.fromisoformat(assigned_on_str) if assigned_on_str else None
         if 'modification' in data:
             file.modification = data['modification']
         if 'status' in data:
@@ -2019,13 +2225,40 @@ async def update_uploaded_file(file_id: int, request: Request):
                         is_video_frame=False
                     )
                     db.add(project_image)
-                    print(f"✅ Created ProjectImage for {file.file_name} (ID: {file.id}) in project {project_id}")
+                    print(f"Created ProjectImage for {file.file_name} (ID: {file.id}) in project {project_id}")
                 except Exception as e:
                     # If ProjectImage creation fails, log but don't fail the entire update
-                    print(f"❌ Error creating ProjectImage for {file.file_name} (ID: {file.id}) in project {project_id}: {e}")
+                    print(f"Error creating ProjectImage for {file.file_name} (ID: {file.id}) in project {project_id}: {e}")
                     import traceback
                     traceback.print_exc()
                     # Continue - file update will still succeed even if ProjectImage creation fails
+            
+            # Maintain Assignments Mapping Table
+            user_to_assign = data.get('assigned_to', file.assigned_to)
+            if user_to_assign:
+                user = db.query(User).filter(
+                    (User.name == user_to_assign) | 
+                    (User.email == user_to_assign) | 
+                    (User.username == user_to_assign)
+                ).first()
+                if user:
+                    existing_assignment = db.query(Assignment).filter(
+                        Assignment.file_id == file.id
+                    ).first()
+                    
+                    if existing_assignment:
+                        existing_assignment.project_id = project_id
+                        existing_assignment.user_id = user.id
+                        existing_assignment.status = 'active'
+                    else:
+                        new_assignment = Assignment(
+                            project_id=project_id,
+                            file_id=file.id,
+                            user_id=user.id,
+                            status='active',
+                            assigned_at=datetime.utcnow()
+                        )
+                        db.add(new_assignment)
         
         db.commit()
         db.refresh(file)
@@ -4588,7 +4821,5 @@ if __name__ == "__main__":
 ║                                                                      ║
 ╚══════════════════════════════════════════════════════════════════════╝
 """)
-if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 7860))
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

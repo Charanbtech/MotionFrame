@@ -70,10 +70,7 @@ const Resources = () => {
   
   // Assigned files states
   const [assignedFiles, setAssignedFiles] = useState([]);
-  const [selectedAssignedFiles, setSelectedAssignedFiles] = useState(new Set());
-  const [expandedProjectFolders, setExpandedProjectFolders] = useState(new Set());
   const [assignedFilesByProject, setAssignedFilesByProject] = useState({});
-  const [selectedProjectFolders, setSelectedProjectFolders] = useState(new Set()); // Track selected folders
   const [filesQueue, setFilesQueue] = useState([]); // Queue of files to add to project
   const [newClassName, setNewClassName] = useState('');
   const [selectedClassColor, setSelectedClassColor] = useState('#FF6B6B');
@@ -138,7 +135,7 @@ console.log(authToken);
             height: currentAnnotation.height
           };
           const token = authToken || localStorage.getItem('token');
-          fetch(`${API_BASE_URL}/api/annotations', {
+          fetch(`${API_BASE_URL}/api/annotations`, {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -161,7 +158,7 @@ console.log(authToken);
             brushSize: currentAnnotation.brushSize || 10
           };
           const token = authToken || localStorage.getItem('token');
-          fetch(`${API_BASE_URL}/api/annotations', {
+          fetch(`${API_BASE_URL}/api/annotations`, {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -182,7 +179,7 @@ console.log(authToken);
       if (currentTool === 'polygon' && polygonPoints.length >= 3 && currentClass) {
         // Save polygon annotation with keepalive
         const token = authToken || localStorage.getItem('token');
-        fetch(`${API_BASE_URL}/api/annotations', {
+        fetch(`${API_BASE_URL}/api/annotations`, {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
@@ -959,7 +956,7 @@ console.log(authToken);
       }
 
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/annotations', {
+      const response = await fetch(`${API_BASE_URL}/api/annotations`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -1103,7 +1100,7 @@ console.log(authToken);
       const formData = new FormData();
       formData.append('file', file);
 
-      const resp = await fetch(`${API_BASE_URL}/api/sam/embedding', {
+      const resp = await fetch(`${API_BASE_URL}/api/sam/embedding`, {
         method: 'POST',
         headers: {
           'X-Requested-From': 'ai-annotation'
@@ -1162,7 +1159,7 @@ console.log(authToken);
       formData.append('points', JSON.stringify(ptsArray));
       formData.append('point_labels', JSON.stringify(labelsArray));
 
-      const resp = await fetch(`${API_BASE_URL}/api/sam/predict_interactive', {
+      const resp = await fetch(`${API_BASE_URL}/api/sam/predict_interactive`, {
         method: 'POST',
         headers: {
           'X-Requested-From': 'ai-annotation'
@@ -1569,7 +1566,7 @@ console.log(authToken);
         return;
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1599,7 +1596,7 @@ console.log(authToken);
         return null;
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -1676,7 +1673,7 @@ console.log(authToken);
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -1857,7 +1854,7 @@ console.log(authToken);
         return;
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -1925,7 +1922,7 @@ console.log(authToken);
   const loadProjects = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -2208,7 +2205,7 @@ console.log(authToken);
 
       try {
         const token = authToken || localStorage.getItem('token');
-        const response = await fetch(`${API_BASE_URL}/api/upload', {
+        const response = await fetch(`${API_BASE_URL}/api/upload`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -2269,7 +2266,7 @@ console.log(authToken);
     if (!user) return;
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
+      const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files`);
       if (response.ok) {
         const allFiles = await response.json();
         console.log('📁 Total files from API:', allFiles.length);
@@ -2305,149 +2302,11 @@ console.log(authToken);
     }
   };
 
-  // Handle assigned file selection
-  const handleAssignedFileSelect = (fileId) => {
-    setSelectedAssignedFiles(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(fileId)) {
-        newSet.delete(fileId);
-      } else {
-        newSet.add(fileId);
-      }
-      return newSet;
-    });
-  };
-
-  // Handle select all assigned files
-  const handleSelectAllAssignedFiles = (e) => {
-    if (e.target.checked) {
-      setSelectedAssignedFiles(new Set(assignedFiles.map(f => f.id)));
-    } else {
-      setSelectedAssignedFiles(new Set());
-    }
-  };
-
-  // Add selected assigned files directly to project
-  const handleAddToProject = async () => {
-    if (selectedAssignedFiles.size === 0 && selectedProjectFolders.size === 0) {
-      showToastMessage('⚠️ Please select at least one file or folder');
-      return;
-    }
-
-    // If folders are selected, load the project for the first folder
-    if (selectedProjectFolders.size > 0) {
-      const firstFolderName = Array.from(selectedProjectFolders)[0];
-      const loadedProject = await loadProjectByName(firstFolderName);
-      if (!loadedProject) {
-        return; // Error message already shown in loadProjectByName
-      }
-      // Ensure mode stays as 'assigned-files' when loading project from assigned files
-      setProjectMode('assigned-files');
-    } else if (!currentProject) {
-      // If only individual files are selected and no project is loaded, show error
-      showToastMessage('⚠️ Please select a folder (which has a project) or create a project first');
-      return;
-    }
-
-    // Collect files from selected folders
-    let filesToAdd = [];
-    selectedProjectFolders.forEach(projectName => {
-      const folderFiles = assignedFilesByProject[projectName] || [];
-      filesToAdd.push(...folderFiles);
-    });
-
-    // Add individually selected files
-    const selectedFiles = assignedFiles.filter(f => selectedAssignedFiles.has(f.id));
-    filesToAdd.push(...selectedFiles);
-
-    // Close modal first
-    setSelectedAssignedFiles(new Set());
-    setSelectedProjectFolders(new Set());
+  // Open assigned project directly
+  const handleOpenAssignedProject = async (projectName) => {
     setShowAssignedFilesModal(false);
-
-    // Check which files already exist in project and add only new ones
-    const token = authToken || localStorage.getItem('token');
-    try {
-      const imagesResponse = await fetch(`${API_BASE_URL}/api/projects/${currentProject.id}/images`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      let existingFilenames = new Set();
-      if (imagesResponse.ok) {
-        const projectImages = await imagesResponse.json();
-        existingFilenames = new Set(projectImages.map(img => img.filename));
-      }
-
-      // Filter out files that already exist
-      const newFiles = filesToAdd.filter(f => !existingFilenames.has(f.file_name));
-      
-      if (newFiles.length === 0) {
-        showToastMessage('ℹ️ All selected files are already in the project');
-        // Reload images to ensure we have the latest data
-        await loadProjectImages();
-        return;
-      }
-
-      // Process files and add them to project
-      let successCount = 0;
-      let errorCount = 0;
-
-      for (const file of newFiles) {
-        try {
-          // Check if file already exists
-          if (existingFilenames.has(file.file_name)) {
-            continue;
-          }
-
-          // Fetch and upload file
-          const fileResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files/${file.id}/preview`, {
-            credentials: 'include'
-          });
-          
-          if (!fileResponse.ok) {
-            errorCount++;
-            continue;
-          }
-
-          const blob = await fileResponse.blob();
-          const formData = new FormData();
-          formData.append('file', blob, file.file_name);
-          formData.append('project_id', currentProject.id);
-
-          const uploadResponse = await fetch(`${API_BASE_URL}/api/upload', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`
-            },
-            body: formData
-          });
-
-          if (uploadResponse.ok) {
-            successCount++;
-          } else {
-            errorCount++;
-          }
-        } catch (error) {
-          console.error('Error adding file:', error);
-          errorCount++;
-        }
-      }
-
-      // Reload project images to show newly added files in image-gallery
-      await loadProjectImages();
-
-      if (successCount > 0) {
-        showToastMessage(`✅ ${successCount} file(s) added to project`);
-      }
-      if (errorCount > 0) {
-        showToastMessage(`⚠️ ${errorCount} file(s) failed to add`);
-      }
-    } catch (error) {
-      console.error('Error processing files:', error);
-      showToastMessage('❌ Error adding files to project');
-    }
+    setProjectMode('assigned-files');
+    await loadProjectByName(projectName);
   };
 
   // Load file from queue to canvas
@@ -2499,7 +2358,7 @@ console.log(authToken);
         formData.append('file', blob, file.file_name);
         formData.append('project_id', currentProject.id);
 
-        const uploadResponse = await fetch(`${API_BASE_URL}/api/upload', {
+        const uploadResponse = await fetch(`${API_BASE_URL}/api/upload`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -2806,7 +2665,7 @@ console.log(authToken);
         height: annotation.height
       } : { points: annotation.points, brushSize: annotation.brushSize || 10 };
 
-      const response = await fetch(`${API_BASE_URL}/api/annotations', {
+      const response = await fetch(`${API_BASE_URL}/api/annotations`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -3048,7 +2907,7 @@ console.log(authToken);
 
     try {
       console.log('Exporting project ID:', projectIdToExport, 'Project name:', currentProject.name);
-      const response = await fetch(`${API_BASE_URL}/api/export', {
+      const response = await fetch(`${API_BASE_URL}/api/export`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4540,7 +4399,7 @@ console.log(authToken);
                   let failedCount = 0;
                   for (const ann of newAnnotations) {
                     console.log(`💾 Saving: ${ann.class} at (${ann.coordinates.x}, ${ann.coordinates.y}, ${ann.coordinates.width}x${ann.coordinates.height})`);
-                    const response = await fetch(`${API_BASE_URL}/api/annotations', {
+                    const response = await fetch(`${API_BASE_URL}/api/annotations`, {
                       method: 'POST',
                       headers: { 
                         'Content-Type': 'application/json',
@@ -4648,7 +4507,7 @@ console.log(authToken);
                   // Save only new annotations
                   let savedCount = 0;
                   for (const ann of newAnnotations) {
-                    const response = await fetch(`${API_BASE_URL}/api/annotations', {
+                    const response = await fetch(`${API_BASE_URL}/api/annotations`, {
                       method: 'POST',
                       headers: { 
                         'Content-Type': 'application/json',
@@ -4966,7 +4825,7 @@ console.log(authToken);
                       setVersionLabel('');
                       try {
                         const token = authToken || localStorage.getItem('token');
-                        const res = await fetch(`${API_BASE_URL}/api/dataset/export-version', {
+                        const res = await fetch(`${API_BASE_URL}/api/dataset/export-version`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                           body: JSON.stringify({ project_id: currentProject.id })
@@ -5316,159 +5175,64 @@ console.log(authToken);
         }}>
           <div className="modal-content bw-modal" style={{ maxWidth: '800px' }}>
             <div className="bw-modal-header">
-              <h3 style={{ margin: 0, fontWeight: 700, fontSize: '22px', letterSpacing: '-0.5px' }}>Assigned Files</h3>
-              <p style={{ margin: '6px 0 0 0', fontSize: '13px', color: '#666', fontWeight: 400 }}>Choose files assigned to you to start annotating in your current project</p>
+              <h3 style={{ margin: 0, fontWeight: 700, fontSize: '22px', letterSpacing: '-0.5px' }}>Assigned Projects</h3>
+              <p style={{ margin: '6px 0 0 0', fontSize: '13px', color: '#666', fontWeight: 400 }}>Choose a project assigned to you to start annotating immediately</p>
             </div>
             <div style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: '10px' }}>
-              {assignedFiles.length > 0 ? (
-                <>
-                  <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8f8f8', padding: '12px 16px', borderRadius: '8px' }}>
-                    <label style={{ color: '#000', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', fontWeight: '600' }}>
-                      <input
-                        type="checkbox"
-                        checked={assignedFiles.length > 0 && assignedFiles.every(f => selectedAssignedFiles.has(f.id))}
-                        onChange={handleSelectAllAssignedFiles}
-                        style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#000' }}
-                      />
-                      <span>Select All Available ({selectedAssignedFiles.size} selected)</span>
-                    </label>
-                  </div>
-                  {Object.keys(assignedFilesByProject).length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {Object.entries(assignedFilesByProject).map(([projectName, files]) => {
-                        const isExpanded = expandedProjectFolders.has(projectName);
-                        return (
-                          <div key={projectName} style={{ border: '1px solid #e5e5e5', borderRadius: '10px', overflow: 'hidden', background: '#fff' }}>
-                            <div
-                              style={{
-                                padding: '14px 18px',
-                                background: selectedProjectFolders.has(projectName) ? '#000000' : (isExpanded ? '#f9f9f9' : '#ffffff'),
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                transition: 'all 0.2s',
-                                borderBottom: isExpanded ? '1px solid #eee' : 'none'
-                              }}
-                              onClick={() => setExpandedProjectFolders(prev => {
-                                const newSet = new Set(prev);
-                                if (newSet.has(projectName)) newSet.delete(projectName);
-                                else newSet.add(projectName);
-                                return newSet;
-                              })}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <input
-                                  type="checkbox"
-                                  onClick={(e) => e.stopPropagation()}
-                                  checked={selectedProjectFolders.has(projectName)}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedProjectFolders(prev => {
-                                      const newSet = new Set(prev);
-                                      if (newSet.has(projectName)) newSet.delete(projectName);
-                                      else newSet.add(projectName);
-                                      return newSet;
-                                    });
-                                  }}
-                                  style={{ width: '16px', height: '16px', accentColor: '#000' }}
-                                />
-                                <span style={{ color: selectedProjectFolders.has(projectName) ? '#ffffff' : '#000000', fontWeight: '700', fontSize: '15px' }}>{projectName}</span>
-                                <span style={{ color: selectedProjectFolders.has(projectName) ? 'rgba(255,255,255,0.7)' : '#666', fontSize: '12px' }}>({files.length} documents)</span>
-                              </div>
-                              <span style={{ color: selectedProjectFolders.has(projectName) ? '#ffffff' : '#999', transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', display: 'inline-block' }}>▶</span>
-                            </div>
-                            
-                            {isExpanded && !selectedProjectFolders.has(projectName) && (
-                              <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '10px', background: '#fafafa' }}>
-                                {files.map(file => (
-                                  <div
-                                    key={file.id}
-                                    onClick={() => handleAssignedFileSelect(file.id)}
-                                    style={{
-                                      padding: '12px 14px',
-                                      borderRadius: '8px',
-                                      background: selectedAssignedFiles.has(file.id) ? '#000000' : '#ffffff',
-                                      border: '1px solid #e5e5e5',
-                                      cursor: 'pointer',
-                                      transition: 'all 0.2s',
-                                      boxShadow: selectedAssignedFiles.has(file.id) ? '0 4px 12px rgba(0,0,0,0.1)' : 'none'
-                                    }}
-                                  >
-                                    <div style={{ 
-                                      fontSize: '12px', 
-                                      color: selectedAssignedFiles.has(file.id) ? '#ffffff' : '#000000',
-                                      whiteSpace: 'nowrap',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                      fontWeight: '600'
-                                    }}>
-                                      {file.file_name}
-                                    </div>
-                                    <div style={{ fontSize: '10px', color: selectedAssignedFiles.has(file.id) ? 'rgba(255,255,255,0.6)' : '#999', marginTop: '2px' }}>
-                                      {file.file_type?.toUpperCase() || 'FILE'}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '12px' }}>
-                      {assignedFiles.map((file) => (
-                        <div
-                          key={file.id}
-                          onClick={() => handleAssignedFileSelect(file.id)}
-                          style={{
-                            padding: '16px 12px',
-                            borderRadius: '10px',
-                            background: selectedAssignedFiles.has(file.id) ? '#000000' : '#ffffff',
-                            border: '1px solid #e5e5e5',
-                            cursor: 'pointer',
-                            textAlign: 'center',
-                            transition: 'all 0.2s ease',
-                            boxShadow: selectedAssignedFiles.has(file.id) ? '0 4px 12px rgba(0,0,0,0.1)' : 'none'
-                          }}
-                        >
-                          <div style={{ 
-                            fontSize: '13px', 
-                            color: selectedAssignedFiles.has(file.id) ? '#ffffff' : '#000000',
-                            fontWeight: '600',
-                            marginBottom: '6px',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
-                          }}>
-                            {file.file_name}
-                          </div>
-                          <div style={{ fontSize: '10px', color: selectedAssignedFiles.has(file.id) ? 'rgba(255,255,255,0.7)' : '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            {file.file_type?.toUpperCase() || 'FILE'}
-                          </div>
+              {Object.keys(assignedFilesByProject).length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {Object.entries(assignedFilesByProject).map(([projectName, files]) => (
+                    <div
+                      key={projectName}
+                      onClick={() => handleOpenAssignedProject(projectName)}
+                      style={{
+                        padding: '16px 20px',
+                        background: '#ffffff',
+                        border: '1px solid #e5e5e5',
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        transition: 'all 0.2s ease',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.borderColor = '#000000';
+                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.borderColor = '#e5e5e5';
+                        e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.02)';
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div style={{
+                          width: '40px', height: '40px', borderRadius: '8px', background: '#f5f5f5',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000'
+                        }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                         </div>
-                      ))}
+                        <div>
+                          <div style={{ color: '#000000', fontWeight: '700', fontSize: '16px', marginBottom: '4px' }}>{projectName}</div>
+                          <div style={{ color: '#666', fontSize: '13px' }}>{files.length} documents assigned</div>
+                        </div>
+                      </div>
+                      <div style={{ color: '#000', opacity: 0.5 }}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                      </div>
                     </div>
-                  )}
-                </>
+                  ))}
+                </div>
               ) : (
                 <div style={{ textAlign: 'center', padding: '60px 40px', background: '#f9f9f9', borderRadius: '12px', border: '1px dashed #e5e5e5' }}>
-                  <div style={{ fontSize: '14px', color: '#888', fontWeight: '500' }}>No files assigned to you yet.</div>
-                  <div style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>Check back later for new documents.</div>
+                  <div style={{ fontSize: '14px', color: '#888', fontWeight: '500' }}>No projects assigned to you yet.</div>
+                  <div style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>Check back later for new assignments.</div>
                 </div>
               )}
             </div>
             <div className="bw-modal-actions">
-              <button
-                type="button"
-                className="bw-btn-submit"
-                onClick={handleAddToProject}
-                disabled={(selectedAssignedFiles.size === 0 && selectedProjectFolders.size === 0)}
-              >
-                {selectedProjectFolders.size > 0 ? 'Load Project & Add Files' : 'Add to Current Project'} ({selectedAssignedFiles.size + Array.from(selectedProjectFolders).reduce((sum, folder) => sum + (assignedFilesByProject[folder]?.length || 0), 0)})
-              </button>
-              <button type="button" className="bw-btn-cancel" onClick={() => setShowAssignedFilesModal(false)}>Cancel</button>
+              <button type="button" className="btn bw-btn-cancel" onClick={() => setShowAssignedFilesModal(false)}>Close</button>
             </div>
           </div>
         </div>

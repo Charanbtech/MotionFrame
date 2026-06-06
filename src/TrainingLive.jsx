@@ -1,4 +1,4 @@
-import { API_BASE_URL, WS_BASE_URL } from './config';
+import { API_BASE_URL } from './config';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -141,7 +141,7 @@ const TrainingLive = () => {
     const connectWs = () => {
       if (status !== 'running' && status !== 'pending') return;
 
-      const ws = new WebSocket(`${WS_BASE_URL}/ws/training/${jobId}`);
+      const ws = new WebSocket(`ws://localhost:8000/ws/training/${jobId}`);
       wsRef.current = ws;
 
       ws.onmessage = (event) => {

@@ -2,6 +2,7 @@ import { API_BASE_URL } from './config';
 import React, { useState, useRef, useEffect } from 'react';
 import { Container, Button, Table, ProgressBar } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from './AuthContext';
 import './BulkUpload.css';
 
 const BulkUpload = () => {
@@ -14,12 +15,19 @@ const BulkUpload = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState([]);
   const [uploadedFiles, setUploadedFiles] = useState([]);
+  const { user } = useAuth(); // Import useAuth to check user
+
+  useEffect(() => {
+    if (user && !user.is_owner) {
+      navigate('/');
+    }
+  }, [user, navigate]);
 
   // Load uploaded files from backend on component mount
   useEffect(() => {
     const loadUploadedFiles = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
+        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files`);
         if (response.ok) {
           const files = await response.json();
           const transformedFiles = files.map(file => ({
@@ -138,7 +146,7 @@ const BulkUpload = () => {
       const formData = new FormData();
       formData.append('file', file);
       
-      const response = await fetch(`${API_BASE_URL}/api/bulk-upload', {
+      const response = await fetch(`${API_BASE_URL}/api/bulk-upload`, {
         method: 'POST',
         body: formData
       });
@@ -182,29 +190,31 @@ const BulkUpload = () => {
           console.error('Error saving to localStorage:', error);
         }
       } else {
-        // Regular file - reload all files from backend
-        const filesResponse = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
-        if (filesResponse.ok) {
-          const files = await filesResponse.json();
-          const transformedFiles = files.map(file => ({
-            id: file.id,
-            fileName: file.file_name,
-            fileType: file.file_type,
-            uploadedOn: file.uploaded_on || new Date(file.uploaded_at).toLocaleDateString('en-GB', {
-              day: '2-digit',
-              month: '2-digit',
-              year: 'numeric'
-            }),
-            uploadedAt: file.uploaded_at
-          }));
-          setUploadedFiles(transformedFiles);
-          
-          // Also save to localStorage for Dashboard
-          try {
-            localStorage.setItem('uploadedFiles', JSON.stringify(transformedFiles));
-          } catch (error) {
-            console.error('Error saving to localStorage:', error);
-          }
+        // Regular file - use data directly from upload response to avoid overloading backend
+        const newFile = {
+          id: data.id,
+          fileName: data.file_name,
+          fileType: data.file_type,
+          uploadedOn: data.uploaded_at ? new Date(data.uploaded_at).toLocaleDateString('en-GB', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          }) : new Date().toLocaleDateString('en-GB', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          }),
+          uploadedAt: data.uploaded_at || new Date().toISOString()
+        };
+        
+        setUploadedFiles(prev => [newFile, ...prev]);
+        
+        // Also save to localStorage for Dashboard
+        try {
+          const currentFiles = JSON.parse(localStorage.getItem('uploadedFiles') || '[]');
+          localStorage.setItem('uploadedFiles', JSON.stringify([newFile, ...currentFiles]));
+        } catch (error) {
+          console.error('Error saving to localStorage:', error);
         }
       }
       

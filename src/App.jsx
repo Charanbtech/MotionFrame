@@ -7,6 +7,7 @@ import Resources from './Resources';
 import Dashboard from './Dashboard';
 import BulkUpload from './BulkUpload';
 import AssignedDocument from './AssignedDocument';
+import ProjectsView from './ProjectsView';
 import Login from './Login';
 import Registration from './Registration';
 import ResetPassword from './ResetPassword';
@@ -77,6 +78,14 @@ function App() {
           element={
             <ProtectedRoute>
               <AssignedDocument />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects-view"
+          element={
+            <ProtectedRoute>
+              <ProjectsView />
             </ProtectedRoute>
           }
         />

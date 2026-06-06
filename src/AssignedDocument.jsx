@@ -19,12 +19,21 @@ const AssignedDocument = () => {
   const [isUpdatingOwner, setIsUpdatingOwner] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [userToExport, setUserToExport] = useState(null);
+  const [selectedUsers, setSelectedUsers] = useState(new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  useEffect(() => {
+    if (user && !user.is_owner) {
+      navigate('/');
+    }
+  }, [user, navigate]);
 
   useEffect(() => {
     // Load all users
     const loadUsers = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/users');
+        const response = await fetch(`${API_BASE_URL}/api/users`);
         if (response.ok) {
           const usersData = await response.json();
           setUsers(usersData);
@@ -37,7 +46,7 @@ const AssignedDocument = () => {
     // Load uploaded files to calculate stats
     const loadUploadedFiles = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files');
+        const response = await fetch(`${API_BASE_URL}/api/bulk-upload/files`);
         if (response.ok) {
           const files = await response.json();
           setUploadedFiles(files);
@@ -237,7 +246,7 @@ const AssignedDocument = () => {
 
       if (response.ok) {
         // Reload users
-        const usersResponse = await fetch(`${API_BASE_URL}/api/users');
+        const usersResponse = await fetch(`${API_BASE_URL}/api/users`);
         if (usersResponse.ok) {
           const usersData = await usersResponse.json();
           setUsers(usersData);
@@ -265,6 +274,85 @@ const AssignedDocument = () => {
       alert('Failed to update owner status. Please try again.');
     } finally {
       setIsUpdatingOwner(false);
+    }
+  };
+
+  const handleDeleteUsers = async () => {
+    if (selectedUsers.size === 0) return;
+    
+    const token = authToken || localStorage.getItem('token');
+    if (!token) {
+      alert('Authentication token not found. Please log in again.');
+      navigate('/login');
+      return;
+    }
+
+    if (!user || !user.is_owner) {
+      alert('Only owners can delete users.');
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const deletePromises = Array.from(selectedUsers).map(async (userId) => {
+        const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || `Failed to delete user ${userId}`);
+        }
+        return response.json();
+      });
+
+      await Promise.all(deletePromises);
+      
+      // Reload users
+      const usersResponse = await fetch(`${API_BASE_URL}/api/users`);
+      if (usersResponse.ok) {
+        const usersData = await usersResponse.json();
+        setUsers(usersData);
+      }
+      
+      setSelectedUsers(new Set());
+      setShowDeleteModal(false);
+      alert('Successfully deleted selected user(s).');
+    } catch (error) {
+      console.error('Error deleting users:', error);
+      alert(`Failed to delete users: ${error.message}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleSelectUser = (userId) => {
+    setSelectedUsers(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(userId)) newSet.delete(userId);
+      else newSet.add(userId);
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = (e) => {
+    if (e.target.checked) {
+      const allIds = paginatedUsers.map(u => u.id);
+      setSelectedUsers(prev => {
+        const newSet = new Set(prev);
+        allIds.forEach(id => newSet.add(id));
+        return newSet;
+      });
+    } else {
+      const currentPageIds = paginatedUsers.map(u => u.id);
+      setSelectedUsers(prev => {
+        const newSet = new Set(prev);
+        currentPageIds.forEach(id => newSet.delete(id));
+        return newSet;
+      });
     }
   };
 
@@ -340,6 +428,11 @@ const AssignedDocument = () => {
           <div className="d-flex justify-content-between align-items-center mb-3">
             <h4 className="table-title">All Users</h4>
             <div className="d-flex gap-2">
+              {selectedUsers.size > 0 && (
+                <Button variant="danger" className="filter-btn" onClick={() => setShowDeleteModal(true)} style={{ backgroundColor: '#dc3545', color: 'white', borderColor: '#dc3545' }}>
+                  <i className="fas fa-trash"></i> Remove ({selectedUsers.size})
+                </Button>
+              )}
               <Button variant="outline-secondary" className="filter-btn">
                 <i className="fas fa-filter"></i> Filters
               </Button>
@@ -365,7 +458,11 @@ const AssignedDocument = () => {
               <thead>
                 <tr>
                   <th>
-                    <Form.Check type="checkbox" />
+                    <Form.Check 
+                      type="checkbox" 
+                      onChange={handleSelectAll}
+                      checked={paginatedUsers.length > 0 && paginatedUsers.every(u => selectedUsers.has(u.id))}
+                    />
                   </th>
                   <th>User Name</th>
                   <th>Email</th>
@@ -383,7 +480,11 @@ const AssignedDocument = () => {
                   paginatedUsers.map((user) => (
                     <tr key={user.id}>
                       <td>
-                        <Form.Check type="checkbox" />
+                        <Form.Check 
+                          type="checkbox" 
+                          checked={selectedUsers.has(user.id)}
+                          onChange={() => handleSelectUser(user.id)}
+                        />
                       </td>
                       <td>{user.name}</td>
                       <td>{user.email}</td>
@@ -549,6 +650,29 @@ const AssignedDocument = () => {
               : userToUpdate?.is_owner 
                 ? 'Remove Owner' 
                 : 'Add Owner'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      {/* Delete User Confirmation Modal */}
+      <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Delete Users</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p>
+            Are you sure you want to delete <strong>{selectedUsers.size}</strong> selected user(s)?
+          </p>
+          <p className="text-danger">
+            This action cannot be undone. Any files assigned to these users will be unassigned.
+          </p>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowDeleteModal(false)} disabled={isDeleting}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={handleDeleteUsers} disabled={isDeleting}>
+            {isDeleting ? 'Deleting...' : 'Delete Users'}
           </Button>
         </Modal.Footer>
       </Modal>

@@ -147,7 +147,7 @@ const TrainingConfig = () => {
   // ── check for an already-running training job ─────────────────────────────
   const checkTrainingStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/training/status', {
+      const res = await fetch(`${API_BASE_URL}/api/training/status`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -255,7 +255,7 @@ const TrainingConfig = () => {
 
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/training/start', {
+      const res = await fetch(`${API_BASE_URL}/api/training/start`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

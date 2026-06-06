@@ -1588,7 +1588,7 @@ const DocsAnnotation = ({ currentProject, images, currentImageIndex, onImageSele
       const file = new File([blob], filename, { type: blob.type || 'image/jpeg' });
       form.append('file', file, filename);
 
-      const resp = await fetch(`${API_BASE_URL}/api/docs/predict', {
+      const resp = await fetch(`${API_BASE_URL}/api/docs/predict`, {
         method: 'POST',
         headers: { 'X-Requested-From': 'docs-annotation' },
         body: form
